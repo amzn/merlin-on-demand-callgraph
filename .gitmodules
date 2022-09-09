@@ -1,0 +1,6 @@
+[submodule "tajs_vr"]
+	path = tajs_vr
+	url = git@github.com:cs-au-dk/tajs_vr.git
+[submodule "js_value_refiner"]
+	path = js_value_refiner
+	url = https://github.com/cuplv/js_value_refiner
