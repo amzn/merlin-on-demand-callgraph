@@ -19,13 +19,14 @@ import com.amazon.pvar.tspoc.merlin.ir.*;
 import com.amazon.pvar.tspoc.merlin.solver.BackwardMerlinSolver;
 import com.amazon.pvar.tspoc.merlin.solver.CallGraph;
 import com.amazon.pvar.tspoc.merlin.solver.ForwardMerlinSolver;
+import com.amazon.pvar.tspoc.merlin.solver.MerlinSolverFactory;
 import com.amazon.pvar.tspoc.merlin.solver.PointsToGraph;
+import com.amazon.pvar.tspoc.merlin.solver.querygraph.QueryGraph;
 import dk.brics.tajs.flowgraph.FlowGraph;
 import dk.brics.tajs.flowgraph.jsnodes.CallNode;
 import dk.brics.tajs.flowgraph.jsnodes.ConstantNode;
 import dk.brics.tajs.flowgraph.jsnodes.DeclareFunctionNode;
 import dk.brics.tajs.flowgraph.jsnodes.NewObjectNode;
-import org.junit.Ignore;
 import org.junit.Test;
 import sync.pds.solver.nodes.Node;
 
@@ -92,7 +93,6 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
     }
 
     @Test
-    @Ignore
     public void forwardQueryFuncAssign() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/intraprocedural-tests/intraproceduralFunctionPropagation.js");
@@ -106,6 +106,8 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
         );
 
         ForwardMerlinSolver solver = new ForwardMerlinSolver(callGraph, pointsTo, initialQuery);
+        MerlinSolverFactory.addNewActiveSolver(solver);
+        QueryGraph.getInstance().setRoot(solver);
         solver.solve();
         Collection<PointsToGraph.PointsToLocation> pts = pointsTo.getKnownValuesPointingTo(allocation);
         Collection<CallNode> invokes = pointsTo.getKnownFunctionInvocations(allocation);
@@ -115,7 +117,6 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
     }
 
     @Test
-    @Ignore
     public void forwardQueryFuncDecl() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/intraprocedural-tests/intraproceduralFunctionDecl.js");
@@ -129,6 +130,8 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
         );
 
         ForwardMerlinSolver solver = new ForwardMerlinSolver(callGraph, pointsTo, initialQuery);
+        MerlinSolverFactory.addNewActiveSolver(solver);
+        QueryGraph.getInstance().setRoot(solver);
         solver.solve();
         Collection<PointsToGraph.PointsToLocation> pts = pointsTo.getKnownValuesPointingTo(allocation);
         Collection<CallNode> invokes = pointsTo.getKnownFunctionInvocations(allocation);

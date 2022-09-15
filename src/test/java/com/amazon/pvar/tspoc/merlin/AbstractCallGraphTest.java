@@ -16,6 +16,8 @@
 package com.amazon.pvar.tspoc.merlin;
 
 import com.amazon.pvar.tspoc.merlin.experiments.Main;
+import com.amazon.pvar.tspoc.merlin.solver.MerlinSolverFactory;
+import com.amazon.pvar.tspoc.merlin.solver.querygraph.QueryGraph;
 import dk.brics.tajs.flowgraph.FlowGraph;
 import dk.brics.tajs.flowgraph.jsnodes.Node;
 import org.junit.Before;
@@ -44,4 +46,9 @@ public class AbstractCallGraphTest {
                 .orElseThrow();
     }
 
+    @Before
+    public void setup() {
+        MerlinSolverFactory.reset();
+        QueryGraph.reset();
+    }
 }
