@@ -583,7 +583,7 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     @Test
     public void callNodeForward() {
         FlowGraph flowGraph =
-                initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/functionCall.js");
+                initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/functionCallEnv.js");
         PointsToGraph pointsTo = new PointsToGraph();
         CallGraph callGraph = new CallGraph();
         CallNode cn = (CallNode) getNodeByIndex(18, flowGraph);
@@ -610,18 +610,18 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
         logTest(cn, valArg, nextStates, false);
 
         // Check that flow is also propagated from environment to called function
-//        TODO: Commenting this out for now until closures are handled properly
-//        Value valEnv1 = new Variable("otherObj");
-//        Set<State> nextStatesEnv1 = ff.computeNextStates(cn, valEnv1);
-//        sync.pds.solver.nodes.Node<NodeState, Value> targetEnv1 =
-//                new PushNode<>(
-//                        new NodeState(getNodeByIndex(22, flowGraph)),
-//                        valEnv1,
-//                        new NodeState(cn),
-//                        SyncPDSSolver.PDSSystem.CALLS
-//                );
-//        assert nextStatesEnv1.contains(targetEnv1);
-//        logTest(cn, valEnv1, nextStatesEnv1, false);
+        callGraph.addEdge(cn, funcEntryNode.getBlock().getFunction());
+        Value valEnv1 = new Variable("otherObj", cn.getBlock().getFunction());
+        Set<State> nextStatesEnv1 = solver.getFlowFunctions().computeNextStates(cn, valEnv1);
+        sync.pds.solver.nodes.Node<NodeState, Value> targetEnv1 =
+                new PushNode<>(
+                        new NodeState(getNodeByIndex(22, flowGraph)),
+                        valEnv1,
+                        new NodeState(cn),
+                        SyncPDSSolver.PDSSystem.CALLS
+                );
+        assert nextStatesEnv1.contains(targetEnv1);
+        logTest(cn, valEnv1, nextStatesEnv1, false);
 
         // Check that flow is NOT propagated from environment when names are reused in the target function scope
         Value valEnv2 = new Variable("x", flowGraph.getMain());
