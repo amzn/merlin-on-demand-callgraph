@@ -57,7 +57,8 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     /**
-     * TODO
+     * Propagates values to the callee (if they are used in the callee),
+     * or across the call site (if they are not used in the callee)
      * @param n
      */
     @Override
@@ -119,7 +120,7 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     /**
-     * TODO
+     * TODO: Exceptional flow is not currently tracked
      * @param n
      */
     @Override
@@ -147,6 +148,10 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
         treatAsNop(n);
     }
 
+    /**
+     * Merlin does not handle "with" statements, but does flag this unsoundness
+     * @param n
+     */
     @Override
     public void visit(BeginWithNode n) {
         usedRegisters.computeIfAbsent(n.getObjectRegister(), id -> new Register(id, n.getBlock().getFunction()));
@@ -155,7 +160,7 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     /**
-     * TODO
+     * TODO: Exceptional flow is not currently tracked
      * @param n
      */
     @Override
@@ -164,12 +169,14 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     /**
-     * TODO
+     * Declared functions are treated the same as any other value in the program, but special care must be given
+     * to top-level function declarations that are not assigned to a variable.
      * @param n
      */
     @Override
     public void visit(DeclareFunctionNode n) {
         if (n.getResultRegister() == -1) {
+            // This function declaration was not assigned to a result register at creation
             Variable functionVariable = new Variable(n.getFunction().getName(), n.getBlock().getFunction());
             declaredVariables.add(functionVariable);
             FunctionAllocation alloc = new FunctionAllocation(n);
@@ -179,6 +186,7 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
             }
             treatAsNop(n);
         } else {
+            // This function declaration is a function expression, assigned to some result register
             usedRegisters.computeIfAbsent(n.getResultRegister(), id -> new Register(id, n.getBlock().getFunction()));
             treatAsNop(n);
         }
@@ -205,6 +213,10 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
         treatAsNop(n);
     }
 
+    /**
+     * Merlin does not handle "with" statements, but does flag this unsoundness
+     * @param n
+     */
     @Override
     public void visit(EndWithNode n) {
         treatAsNop(n);
@@ -312,7 +324,7 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     /**
-     * TODO
+     * TODO: Exceptional flow is not currently tracked
      * @param n
      */
     @Override
@@ -330,7 +342,7 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     /**
-     * Kill flow of the argument at binary operator nodes
+     * Kill flow of the argument at unary operator nodes
      *
      * @param n
      */
@@ -383,6 +395,10 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
         }
     }
 
+    /**
+     * Merlin does not handle eventdispatchernodes, but does flag this unsoundness
+     * @param n
+     */
     @Override
     public void visit(EventDispatcherNode n) {
         treatAsNop(n);

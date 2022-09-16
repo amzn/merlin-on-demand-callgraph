@@ -95,7 +95,7 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     /**
-     * TODO
+     * TODO: Exceptional flow is not currently tracked
      * @param n
      */
     @Override
@@ -130,6 +130,10 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
         treatAsNop(n);
     }
 
+    /**
+     * Merlin does not handle "with" statements, but does flag this unsoundness
+     * @param n
+     */
     @Override
     public void visit(BeginWithNode n) {
         usedRegisters.computeIfAbsent(n.getObjectRegister(), id -> new Register(id, n.getBlock().getFunction()));
@@ -138,7 +142,7 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     /**
-     * TODO
+     * TODO: Exceptional flow is not currently tracked
      * @param n
      */
     @Override
@@ -196,6 +200,10 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
         treatAsNop(n);
     }
 
+    /**
+     * Merlin does not handle "with" statements, but does flag this unsoundness
+     * @param n
+     */
     @Override
     public void visit(EndWithNode n) {
         treatAsNop(n);
@@ -292,7 +300,7 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     /**
-     * TODO
+     * TODO: Exceptional flow is not currently tracked
      * @param n
      */
     @Override
