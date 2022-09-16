@@ -23,7 +23,6 @@ import dk.brics.tajs.flowgraph.jsnodes.CallNode;
 import dk.brics.tajs.flowgraph.jsnodes.ConstantNode;
 import dk.brics.tajs.flowgraph.jsnodes.DeclareFunctionNode;
 import dk.brics.tajs.flowgraph.jsnodes.NewObjectNode;
-import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 import sync.pds.solver.nodes.Node;
@@ -51,12 +50,6 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
     public void initializeQueryGraph(MerlinSolver solver) {
         MerlinSolverFactory.addNewActiveSolver(solver);
         QueryGraph.getInstance().setRoot(solver);
-    }
-
-    @Before
-    public void setup() {
-        MerlinSolverFactory.reset();
-        QueryGraph.reset();
     }
 
     @Test
@@ -188,7 +181,7 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
     }
 
     @Test
-    @Ignore
+    @Ignore // Will fail until datalog-style solver is implemented (leads to query graph cycle)
     public void findMultipleHigherOrderCallSites() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/interprocedural-tests/higherOrder2.js");
@@ -300,7 +293,7 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
     }
 
     @Test
-    @Ignore
+    @Ignore // Will fail until heap manipulation is supported
     public void paramClosureMultiUse() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/interprocedural-tests/closureParamMultipleUsage.js");
@@ -441,7 +434,8 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
     }
 
     @Test
-    @Ignore
+    @Ignore // TODO: Discuss this test case. Currently fails because Merlin does not distinguish function declarations
+            //  by context.
     public void multipleContextClosureCallReturn() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/interprocedural-tests/closureCallReturnMultContexts.js");

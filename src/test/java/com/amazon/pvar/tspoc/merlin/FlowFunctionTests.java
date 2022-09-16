@@ -19,14 +19,28 @@ import com.amazon.pvar.tspoc.merlin.ir.NodeState;
 import com.amazon.pvar.tspoc.merlin.ir.Register;
 import com.amazon.pvar.tspoc.merlin.ir.Value;
 import com.amazon.pvar.tspoc.merlin.ir.Variable;
+import com.amazon.pvar.tspoc.merlin.solver.BackwardMerlinSolver;
 import com.amazon.pvar.tspoc.merlin.solver.CallGraph;
+import com.amazon.pvar.tspoc.merlin.solver.ForwardMerlinSolver;
 import com.amazon.pvar.tspoc.merlin.solver.MerlinSolverFactory;
+import com.amazon.pvar.tspoc.merlin.solver.PointsToGraph;
 import com.amazon.pvar.tspoc.merlin.solver.flowfunctions.BackwardFlowFunctions;
 import com.amazon.pvar.tspoc.merlin.solver.flowfunctions.ForwardFlowFunctions;
+import com.amazon.pvar.tspoc.merlin.solver.querygraph.QueryGraph;
 import dk.brics.tajs.flowgraph.FlowGraph;
-import dk.brics.tajs.flowgraph.jsnodes.*;
+import dk.brics.tajs.flowgraph.jsnodes.BeginWithNode;
+import dk.brics.tajs.flowgraph.jsnodes.BinaryOperatorNode;
+import dk.brics.tajs.flowgraph.jsnodes.CallNode;
+import dk.brics.tajs.flowgraph.jsnodes.ConstantNode;
+import dk.brics.tajs.flowgraph.jsnodes.DeclareFunctionNode;
+import dk.brics.tajs.flowgraph.jsnodes.IfNode;
+import dk.brics.tajs.flowgraph.jsnodes.NewObjectNode;
+import dk.brics.tajs.flowgraph.jsnodes.Node;
+import dk.brics.tajs.flowgraph.jsnodes.ReadVariableNode;
+import dk.brics.tajs.flowgraph.jsnodes.ReturnNode;
+import dk.brics.tajs.flowgraph.jsnodes.UnaryOperatorNode;
+import dk.brics.tajs.flowgraph.jsnodes.WriteVariableNode;
 import dk.brics.tajs.js2flowgraph.FlowGraphBuilder;
-import org.junit.Ignore;
 import org.junit.Test;
 import sync.pds.solver.SyncPDSSolver;
 import sync.pds.solver.nodes.CallPopNode;
@@ -567,16 +581,22 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     }
 
     @Test
-    @Ignore
     public void callNodeForward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/functionCall.js");
-        ForwardFlowFunctions ff = new ForwardFlowFunctions(new CallGraph());
+        PointsToGraph pointsTo = new PointsToGraph();
+        CallGraph callGraph = new CallGraph();
         CallNode cn = (CallNode) getNodeByIndex(18, flowGraph);
-
-        // Check that flow is propagated from argument to parameter in the called function
         Value valArg = new Register(11, cn.getBlock().getFunction());
-        Set<State> nextStates = ff.computeNextStates(cn, valArg);
+        sync.pds.solver.nodes.Node<NodeState, Value> initialQuery = new sync.pds.solver.nodes.Node<>(
+                new NodeState(cn),
+                valArg
+        );
+        ForwardMerlinSolver solver = new ForwardMerlinSolver(callGraph, pointsTo, initialQuery);
+        MerlinSolverFactory.addNewActiveSolver(solver);
+        QueryGraph.getInstance().setRoot(solver);
+        // Check that flow is propagated from argument to parameter in the called function
+        Set<State> nextStates = solver.getFlowFunctions().computeNextStates(cn, valArg);
         Node funcEntryNode = getNodeByIndex(22, flowGraph);
         Value valParam = new Variable("x", funcEntryNode.getBlock().getFunction());
         sync.pds.solver.nodes.Node<NodeState, Value> targetParam =
@@ -605,7 +625,7 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
 
         // Check that flow is NOT propagated from environment when names are reused in the target function scope
         Value valEnv2 = new Variable("x", flowGraph.getMain());
-        Set<State> nextStatesEnv2 = ff.computeNextStates(cn, valEnv2);
+        Set<State> nextStatesEnv2 = solver.getFlowFunctions().computeNextStates(cn, valEnv2);
         sync.pds.solver.nodes.Node<NodeState, Value> targetEnv2 =
                 new sync.pds.solver.nodes.Node<>(
                         new NodeState(funcEntryNode),
@@ -619,15 +639,22 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     }
 
     @Test
-    @Ignore
     public void callNodeBackward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/functionCall.js");
-        BackwardFlowFunctions ff = new BackwardFlowFunctions(new CallGraph());
+        PointsToGraph pointsTo = new PointsToGraph();
+        CallGraph callGraph = new CallGraph();
         CallNode cn = (CallNode) getNodeByIndex(18, flowGraph);
-        // Check that flow is propagated from return value to return statement in the invoked function
         Value val = new Register(8, cn.getBlock().getFunction());
-        Set<State> nextStates = ff.computeNextStates(cn, val);
+        sync.pds.solver.nodes.Node<NodeState, Value> initialQuery = new sync.pds.solver.nodes.Node<>(
+                new NodeState(cn),
+                val
+        );
+        BackwardMerlinSolver solver = new BackwardMerlinSolver(callGraph, pointsTo, initialQuery);
+        MerlinSolverFactory.addNewActiveSolver(solver);
+        QueryGraph.getInstance().setRoot(solver);
+        // Check that flow is propagated from return value to return statement in the invoked function
+        Set<State> nextStates = solver.getFlowFunctions().computeNextStates(cn, val);
 
         Node returnNode = getNodeByIndex(24, flowGraph);
         Value valReturn = new Register(1, returnNode.getBlock().getFunction());
@@ -644,19 +671,25 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     }
 
     @Test
-    @Ignore
     public void returnNodeForward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/functionCall.js");
-        CallGraph cg = new CallGraph();
-        ForwardFlowFunctions ff = new ForwardFlowFunctions(cg);
+        PointsToGraph pointsTo = new PointsToGraph();
+        CallGraph callGraph = new CallGraph();
+        // Check that flow is propagated from argument to parameter in the called function
         Node callNode = getNodeByIndex(18, flowGraph);
         ReturnNode rn = (ReturnNode) getNodeByIndex(24, flowGraph);
+        Value valArg = new Register(1, rn.getBlock().getFunction());
+        sync.pds.solver.nodes.Node<NodeState, Value> initialQuery = new sync.pds.solver.nodes.Node<>(
+                new NodeState(rn),
+                valArg
+        );
+        ForwardMerlinSolver solver = new ForwardMerlinSolver(callGraph, pointsTo, initialQuery);
+        MerlinSolverFactory.addNewActiveSolver(solver);
+        QueryGraph.getInstance().setRoot(solver);
+        callGraph.addEdge(((CallNode) callNode), rn.getBlock().getFunction());
 
-        cg.addEdge(((CallNode) callNode), rn.getBlock().getFunction());
-
-        Value val = new Register(1, rn.getBlock().getFunction());
-        Set<State> nextStates = ff.computeNextStates(rn, val);
+        Set<State> nextStates = solver.getFlowFunctions().computeNextStates(rn, valArg);
 
         // Check that return values are propagated to return sites
         Value returnVal = new Register(8, callNode.getBlock().getFunction());
@@ -668,6 +701,7 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
                 );
 
         assert nextStates.contains(target);
+        logTest(rn, valArg, nextStates, false);
     }
 
     @Test
@@ -689,5 +723,6 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
                 );
 
         assert nextStates.contains(target);
+        logTest(rn, val, nextStates, true);
     }
 }
