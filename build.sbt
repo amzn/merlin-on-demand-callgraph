@@ -15,7 +15,7 @@
 
 import Dependencies._
 
-ThisBuild / scalaVersion := "2.10.4"
+ThisBuild / scalaVersion := "2.13.9"
 ThisBuild / version := "0.1.0-SNAPSHOT"
 ThisBuild / organization := "com.amazon"
 ThisBuild / organizationName := "pvar"
@@ -26,7 +26,7 @@ lazy val root = (project in file("."))
     libraryDependencies += scalaTest % Test
   )
 
-// Add external JAR files shipped with TAJS or built by subodules
+// Add external JAR files shipped with TAJS or built by submodules
 def thirdPartyJars(base: File): PathFinder =
   (base / "tajs_vr" / "lib") ** "*.jar" +++
     (base / "tajs_vr" / "extras" / "jalangilogger" / "build" / "libs") ** "*.jar" +++

@@ -46,7 +46,6 @@ This project is built on top of the following static analysis projects:
 
 - [TAJS](https://github.com/cs-au-dk/TAJS); released under Apache-2.0
 - [TajsVR](https://github.com/cs-au-dk/tajs_vr/tree/280a5cdb7b3754b4404105f7b989b3844cdea700); released under Apache-2.0
-- [js_value_refiner](https://github.com/cuplv/js_value_refiner/tree/5d8413d7513f72c118755f85cc4d72adc04c5c35); released under MIT license.
 - [SPDS](https://github.com/CodeShield-Security/SPDS); released under EPL-2.0
 
 ---
