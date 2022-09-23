@@ -22,11 +22,15 @@ import dk.brics.tajs.flowgraph.jsnodes.CallNode;
 import dk.brics.tajs.flowgraph.jsnodes.ConstantNode;
 import dk.brics.tajs.flowgraph.jsnodes.DeclareFunctionNode;
 import dk.brics.tajs.flowgraph.jsnodes.NewObjectNode;
+import sync.pds.solver.SyncStatePDSUpdateListener;
 import sync.pds.solver.nodes.*;
 import wpds.impl.Transition;
 import wpds.impl.UnbalancedPopListener;
 import wpds.impl.Weight;
+import wpds.impl.WeightedPAutomaton;
 import wpds.interfaces.State;
+import wpds.interfaces.WPAStateListener;
+import wpds.interfaces.WPAUpdateListener;
 
 import java.util.Collection;
 import java.util.Objects;
@@ -40,6 +44,79 @@ public class BackwardMerlinSolver extends MerlinSolver {
 
     public BackwardMerlinSolver(CallGraph callGraph, PointsToGraph pointsToGraph, Node<NodeState, Value> initialQuery) {
         super(callGraph, pointsToGraph, initialQuery);
+        registerPointsToUpdateListener(initialQuery);
+    }
+
+    /**
+     * Register a state listener on the final state of the automaton. If a new in-transition is added, that means
+     * a new state is empty-field-stack-reachable from the initial query, and we add it to the points-to set for the
+     * initial query if it is an allocation site
+     */
+    private void registerPointsToUpdateListener(Node<NodeState, Value> initialQuery) {
+        this.fieldAutomaton.registerListener(
+                new WPAStateListener<>(new SingleNode<>(initialQuery)) {
+                    @Override
+                    public void onOutTransitionAdded(
+                            Transition<Property, INode<Node<NodeState, Value>>> transition,
+                            Weight.NoWeight noWeight,
+                            WeightedPAutomaton<Property, INode<Node<NodeState, Value>>, Weight.NoWeight> weightedPAutomaton
+                    ) {}
+
+                    @Override
+                    public void onInTransitionAdded(
+                            Transition<Property, INode<Node<NodeState, Value>>> transition,
+                            Weight.NoWeight noWeight,
+                            WeightedPAutomaton<Property, INode<Node<NodeState, Value>>, Weight.NoWeight> weightedPAutomaton
+                    ) {
+                        if (transition.getStart() instanceof GeneratedState) {
+                            return;
+                        }
+                        Node<NodeState, Value> node = transition.getStart().fact();
+                        dk.brics.tajs.flowgraph.jsnodes.Node tajsNode = node.stmt().getNode();
+                        if (tajsNode instanceof NewObjectNode newObjectNode &&
+                                node.fact() instanceof Register register) {
+                            if (newObjectNode.getResultRegister() == register.getId()) {
+                                ObjectAllocation objAlloc = new ObjectAllocation(newObjectNode);
+                                pointsToGraph.addPointsToFact(
+                                        initialQuery.stmt().getNode(),
+                                        initialQuery.fact(), objAlloc
+                                );
+                            }
+                        } else if (tajsNode instanceof ConstantNode constantNode &&
+                                node.fact() instanceof Register register) {
+                            if (constantNode.getResultRegister() == register.getId()) {
+                                ConstantAllocation constantAllocation = new ConstantAllocation(constantNode);
+                                pointsToGraph.addPointsToFact(
+                                        initialQuery.stmt().getNode(),
+                                        initialQuery.fact(),
+                                        constantAllocation
+                                );
+                            }
+                        } else if (tajsNode instanceof DeclareFunctionNode funcNode) {
+                            if (node.fact() instanceof Register register) {
+                                if (funcNode.getResultRegister() == register.getId()) {
+                                    FunctionAllocation functionAllocation = new FunctionAllocation(funcNode);
+                                    pointsToGraph.addPointsToFact(
+                                            initialQuery.stmt().getNode(),
+                                            initialQuery.fact(),
+                                            functionAllocation
+                                    );
+                                }
+                            } else if (node.fact() instanceof Variable var) {
+                                if (Objects.nonNull(funcNode.getFunction().getName()) &&
+                                        funcNode.getFunction().getName().equals(var.getVarName())) {
+                                    FunctionAllocation functionAllocation = new FunctionAllocation(funcNode);
+                                    pointsToGraph.addPointsToFact(
+                                            initialQuery.stmt().getNode(),
+                                            initialQuery.fact(),
+                                            functionAllocation
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+        );
     }
 
     /**
@@ -86,31 +163,6 @@ public class BackwardMerlinSolver extends MerlinSolver {
      */
     @Override
     protected void updatePointsTo(Node<NodeState, Value> node, Set<State> nextStates) {
-        dk.brics.tajs.flowgraph.jsnodes.Node tajsNode = node.stmt().getNode();
-        if (tajsNode instanceof NewObjectNode newObjectNode && node.fact() instanceof Register register) {
-            if (newObjectNode.getResultRegister() == register.getId()) {
-                ObjectAllocation objAlloc = new ObjectAllocation(newObjectNode);
-                pointsToGraph.addPointsToFact(initialQuery.stmt().getNode(), initialQuery.fact(), objAlloc);
-            }
-        } else if (tajsNode instanceof ConstantNode constantNode && node.fact() instanceof Register register) {
-            if (constantNode.getResultRegister() == register.getId()) {
-                ConstantAllocation constantAllocation = new ConstantAllocation(constantNode);
-                pointsToGraph.addPointsToFact(initialQuery.stmt().getNode(), initialQuery.fact(), constantAllocation);
-            }
-        } else if (tajsNode instanceof DeclareFunctionNode funcNode) {
-            if (node.fact() instanceof Register register) {
-                if (funcNode.getResultRegister() == register.getId()) {
-                    FunctionAllocation functionAllocation = new FunctionAllocation(funcNode);
-                    pointsToGraph.addPointsToFact(initialQuery.stmt().getNode(), initialQuery.fact(), functionAllocation);
-                }
-            } else if (node.fact() instanceof Variable var) {
-                if (Objects.nonNull(funcNode.getFunction().getName()) &&
-                        funcNode.getFunction().getName().equals(var.getVarName())) {
-                    FunctionAllocation functionAllocation = new FunctionAllocation(funcNode);
-                    pointsToGraph.addPointsToFact(initialQuery.stmt().getNode(), initialQuery.fact(), functionAllocation);
-                }
-            }
-        }
     }
 
     /**

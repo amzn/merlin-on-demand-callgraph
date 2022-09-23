@@ -26,7 +26,6 @@ import dk.brics.tajs.flowgraph.Function;
 import dk.brics.tajs.flowgraph.SourceLocation;
 import dk.brics.tajs.flowgraph.jsnodes.*;
 import dk.brics.tajs.js2flowgraph.FlowGraphBuilder;
-import sync.pds.solver.SyncPDSSolver;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -261,12 +260,30 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     /**
-     * TODO
+     * Kills flow for the assigned value, adds a property pop rule for the value read from the property, and
+     * propagates all other values
      * @param n
      */
     @Override
     public void visit(ReadPropertyNode n) {
-        treatAsNop(n);
+        Variable base = getBaseForReadPropertyNode(n);
+        Register result =
+                usedRegisters.compute(n.getResultRegister(), (id, r) -> new Register(id, n.getBlock().getFunction()));
+        usedRegisters.compute(n.getBaseRegister(), (id, r) -> new Register(id, n.getBlock().getFunction()));
+        if (n.isPropertyFixed()) {
+            // Property is a fixed String
+            Property property = new Property(n.getPropertyString());
+            Set<Value> killed = new HashSet<>();
+            killed.add(result);
+            killAt(n, killed);
+
+            if (getQueryValue().equals(base)) {
+                addPropPopState(n, result, property);
+            }
+        } else {
+            // TODO: dispatch a backward query on the register used for the property read
+            treatAsNop(n);
+        }
     }
 
     /**
@@ -364,12 +381,26 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     /**
-     * TODO
+     * Adds a property push rule for the value written to the property, and propagates all other values
      * @param n
      */
     @Override
     public void visit(WritePropertyNode n) {
-        treatAsNop(n);
+        Value base = getBaseForWritePropertyNode(n);
+        Value val = getValForWritePropertyNode(n);
+        usedRegisters.compute(n.getValueRegister(), (id, r) -> new Register(id, n.getBlock().getFunction()));
+        usedRegisters.compute(n.getBaseRegister(), (id, r) -> new Register(id, n.getBlock().getFunction()));
+        if (n.isPropertyFixed()) {
+            // Property is a fixed String
+            Property property = new Property(n.getPropertyString());
+            treatAsNop(n);
+            if (getQueryValue().equals(val)) {
+                addPropPushState(n, base, property);
+            }
+        } else {
+            // TODO: dispatch a backward query on the register used for the property read
+            treatAsNop(n);
+        }
     }
 
     /**
@@ -530,15 +561,27 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     private void addCallPushState(Node entryNode, Value val, CallNode callSite) {
-        addSinglePushState(
+        addSingleCallPushState(
                 entryNode,
                 val,
-                callSite,
-                SyncPDSSolver.PDSSystem.CALLS
+                callSite
         );
     }
 
     private void addCallPopState(CallNode returnSite, Value valueToPropagate) {
-        addSinglePopState(returnSite, valueToPropagate, SyncPDSSolver.PDSSystem.CALLS);
+        addSingleCallPopState(returnSite, valueToPropagate);
     }
+
+    private void addPropPopState(Node n, Value val, Property property) {
+        getSuccessors(n).forEach(succ -> {
+            addSinglePropPopState(succ, val, property);
+        });
+    }
+
+    private void addPropPushState(WritePropertyNode n, Value base, Property property) {
+        getSuccessors(n).forEach(succ -> {
+            addSinglePropPushState(succ, base, property);
+        });
+    }
+
 }

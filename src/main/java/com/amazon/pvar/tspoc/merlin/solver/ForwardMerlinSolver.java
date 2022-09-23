@@ -24,7 +24,9 @@ import sync.pds.solver.nodes.*;
 import wpds.impl.Transition;
 import wpds.impl.UnbalancedPopListener;
 import wpds.impl.Weight;
+import wpds.impl.WeightedPAutomaton;
 import wpds.interfaces.State;
+import wpds.interfaces.WPAStateListener;
 
 import java.util.Collection;
 import java.util.Set;
@@ -35,6 +37,44 @@ public class ForwardMerlinSolver extends MerlinSolver {
 
     public ForwardMerlinSolver(CallGraph callGraph, PointsToGraph pointsToGraph, Node<NodeState, Value> initialQuery) {
         super(callGraph, pointsToGraph, initialQuery);
+        if (initialQuery.fact() instanceof Allocation) {
+            registerPointsToUpdateListener(initialQuery);
+        }
+    }
+
+    /**
+     * Register a state listener on the final state of the automaton. If a new in-transition is added, that means
+     * a new state is empty-field-stack-reachable from the initial query, and we add it to the data-flow facts for the
+     * initial query.
+     */
+    private void registerPointsToUpdateListener(Node<NodeState, Value> initialQuery) {
+        this.fieldAutomaton.registerListener(
+                new WPAStateListener<>(new SingleNode<>(initialQuery)) {
+                    @Override
+                    public void onOutTransitionAdded(
+                            Transition<Property, INode<Node<NodeState, Value>>> transition,
+                            Weight.NoWeight noWeight,
+                            WeightedPAutomaton<Property, INode<Node<NodeState, Value>>, Weight.NoWeight> weightedPAutomaton
+                    ) {}
+
+                    @Override
+                    public void onInTransitionAdded(
+                            Transition<Property, INode<Node<NodeState, Value>>> transition,
+                            Weight.NoWeight noWeight,
+                            WeightedPAutomaton<Property, INode<Node<NodeState, Value>>, Weight.NoWeight> weightedPAutomaton
+                    ) {
+                        if (transition.getStart() instanceof GeneratedState) {
+                            return;
+                        }
+                        Node<NodeState, Value> node = transition.getStart().fact();
+                        pointsToGraph.addPointsToFact(
+                                node.stmt().getNode(),
+                                node.fact(),
+                                ((Allocation) initialQuery.fact())
+                        );
+                    }
+                }
+        );
     }
 
     @Override
@@ -49,17 +89,7 @@ public class ForwardMerlinSolver extends MerlinSolver {
      * @param nextStates
      */
     @Override
-    protected void updatePointsTo(Node<NodeState, Value> node, Set<State> nextStates) {
-        if (initialQuery.fact() instanceof Allocation alloc) {
-            nextStates.forEach(state -> {
-                if (state instanceof Node target) {
-                    if (target.stmt() instanceof NodeState nodeState && target.fact() instanceof Value val) {
-                        pointsToGraph.addPointsToFact(nodeState.getNode(), val, alloc);
-                    }
-                }
-            });
-        }
-    }
+    protected void updatePointsTo(Node<NodeState, Value> node, Set<State> nextStates) {}
 
     /**
      * If this solver is attempting to find callees of a function, and it has reached a call site, add a new call edge

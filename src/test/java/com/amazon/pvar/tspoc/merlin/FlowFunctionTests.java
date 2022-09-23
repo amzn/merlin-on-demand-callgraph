@@ -15,7 +15,9 @@
 
 package com.amazon.pvar.tspoc.merlin;
 
+import com.amazon.pvar.tspoc.merlin.ir.ConstantAllocation;
 import com.amazon.pvar.tspoc.merlin.ir.NodeState;
+import com.amazon.pvar.tspoc.merlin.ir.Property;
 import com.amazon.pvar.tspoc.merlin.ir.Register;
 import com.amazon.pvar.tspoc.merlin.ir.Value;
 import com.amazon.pvar.tspoc.merlin.ir.Variable;
@@ -36,15 +38,21 @@ import dk.brics.tajs.flowgraph.jsnodes.DeclareFunctionNode;
 import dk.brics.tajs.flowgraph.jsnodes.IfNode;
 import dk.brics.tajs.flowgraph.jsnodes.NewObjectNode;
 import dk.brics.tajs.flowgraph.jsnodes.Node;
+import dk.brics.tajs.flowgraph.jsnodes.ReadPropertyNode;
 import dk.brics.tajs.flowgraph.jsnodes.ReadVariableNode;
 import dk.brics.tajs.flowgraph.jsnodes.ReturnNode;
 import dk.brics.tajs.flowgraph.jsnodes.UnaryOperatorNode;
+import dk.brics.tajs.flowgraph.jsnodes.WritePropertyNode;
 import dk.brics.tajs.flowgraph.jsnodes.WriteVariableNode;
 import dk.brics.tajs.js2flowgraph.FlowGraphBuilder;
+import org.junit.Ignore;
 import org.junit.Test;
 import sync.pds.solver.SyncPDSSolver;
 import sync.pds.solver.nodes.CallPopNode;
+import sync.pds.solver.nodes.NodeWithLocation;
+import sync.pds.solver.nodes.PopNode;
 import sync.pds.solver.nodes.PushNode;
+import wpds.interfaces.Location;
 import wpds.interfaces.State;
 
 import java.util.Set;
@@ -724,5 +732,91 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
 
         assert nextStates.contains(target);
         logTest(rn, val, nextStates, true);
+    }
+
+    @Test
+    public void propertyReadForward() {
+        FlowGraph flowGraph =
+                initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/propReadWrite.js");
+        ForwardFlowFunctions ff = new ForwardFlowFunctions(new CallGraph());
+        ReadPropertyNode rpn = ((ReadPropertyNode) getNodeByIndex(12, flowGraph));
+        Value base = new Variable("x", rpn.getBlock().getFunction());
+        Value propVal = new Register(7, rpn.getBlock().getFunction());
+        Node nextNode = getNodeByIndex(13, flowGraph);
+        PopNode<NodeWithLocation<NodeState, Value, Location>> target =
+                new PopNode<>(
+                    new NodeWithLocation<>(
+                            new NodeState(nextNode),
+                            propVal,
+                            new Property("p")
+                    ),
+                    SyncPDSSolver.PDSSystem.FIELDS
+                );
+        Set<State> nextStates = ff.computeNextStates(rpn, base);
+        logTest(rpn, base, nextStates, false);
+        assert nextStates.contains(target);
+    }
+
+    @Test
+    public void propertyReadBackward() {
+        FlowGraph flowGraph =
+                initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/propReadWrite.js");
+        BackwardFlowFunctions ff = new BackwardFlowFunctions(new CallGraph());
+        ReadPropertyNode wpn = ((ReadPropertyNode) getNodeByIndex(12, flowGraph));
+        Value base = new Variable("x", wpn.getBlock().getFunction());
+        Value propVal = new Register(7, wpn.getBlock().getFunction());
+        Node prevNode = getNodeByIndex(11, flowGraph);
+        PushNode<NodeState, Value, Property> target = new PushNode<>(
+                new NodeState(prevNode),
+                base,
+                new Property("p"),
+                SyncPDSSolver.PDSSystem.FIELDS
+        );
+        Set<State> nextStates = ff.computeNextStates(wpn, propVal);
+        logTest(wpn, propVal, nextStates, true);
+        assert nextStates.contains(target);
+    }
+
+    @Test
+    public void propertyWriteForward() {
+        FlowGraph flowGraph =
+                initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/propReadWrite.js");
+        ForwardFlowFunctions ff = new ForwardFlowFunctions(new CallGraph());
+        WritePropertyNode wpn = ((WritePropertyNode) getNodeByIndex(16, flowGraph));
+        Value base = new Variable("x", wpn.getBlock().getFunction());
+        Value propVal = new ConstantAllocation((ConstantNode) getNodeByIndex(15, flowGraph));
+        Node nextNode = getNodeByIndex(17, flowGraph);
+        PushNode<NodeState, Value, Property> target = new PushNode<>(
+                new NodeState(nextNode),
+                base,
+                new Property("p"),
+                SyncPDSSolver.PDSSystem.FIELDS
+        );
+        Set<State> nextStates = ff.computeNextStates(wpn, propVal);
+        logTest(wpn, propVal, nextStates, false);
+        assert nextStates.contains(target);
+    }
+
+    @Test
+    public void propertyWriteBackward() {
+        FlowGraph flowGraph =
+                initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/propReadWrite.js");
+        BackwardFlowFunctions ff = new BackwardFlowFunctions(new CallGraph());
+        WritePropertyNode wpn = ((WritePropertyNode) getNodeByIndex(16, flowGraph));
+        Value base = new Variable("x", wpn.getBlock().getFunction());
+        Value propVal = new ConstantAllocation((ConstantNode) getNodeByIndex(15, flowGraph));
+        Node prevNode = getNodeByIndex(15, flowGraph);
+        PopNode<NodeWithLocation<NodeState, Value, Location>> target =
+                new PopNode<>(
+                        new NodeWithLocation<>(
+                                new NodeState(prevNode),
+                                propVal,
+                                new Property("p")
+                        ),
+                        SyncPDSSolver.PDSSystem.FIELDS
+                );
+        Set<State> nextStates = ff.computeNextStates(wpn, base);
+        logTest(wpn, base, nextStates, false);
+        assert nextStates.contains(target);
     }
 }
