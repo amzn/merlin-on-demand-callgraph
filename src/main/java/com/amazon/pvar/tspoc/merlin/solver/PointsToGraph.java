@@ -86,6 +86,11 @@ public class PointsToGraph {
         public int hashCode() {
             return Objects.hash(location, value);
         }
+
+        @Override
+        public String toString() {
+            return value + "@" + location;
+        }
     }
 
     private final Multimap<PointsToLocation, Allocation> pointsToBackingMap = HashMultimap.create();

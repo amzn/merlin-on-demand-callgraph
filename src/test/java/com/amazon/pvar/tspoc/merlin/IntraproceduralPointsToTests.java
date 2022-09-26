@@ -27,10 +27,12 @@ import dk.brics.tajs.flowgraph.jsnodes.CallNode;
 import dk.brics.tajs.flowgraph.jsnodes.ConstantNode;
 import dk.brics.tajs.flowgraph.jsnodes.DeclareFunctionNode;
 import dk.brics.tajs.flowgraph.jsnodes.NewObjectNode;
+import org.junit.Ignore;
 import org.junit.Test;
 import sync.pds.solver.nodes.Node;
 
 import java.util.Collection;
+import java.util.stream.Collectors;
 
 public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
 
@@ -258,6 +260,62 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
 
         assert !pts.contains(new FunctionAllocation(((DeclareFunctionNode) getNodeByIndex(1, flowGraph))));
         assert pts.contains(new FunctionAllocation(((DeclareFunctionNode) getNodeByIndex(2, flowGraph))));
+    }
+
+    @Test
+    public void forwardQueryPropReadWrite() {
+        FlowGraph flowGraph =
+                initializeFlowgraph("src/test/resources/js/callgraph/intraprocedural-tests/intraproceduralPropReadWrite.js");
+        PointsToGraph pointsTo = new PointsToGraph();
+        CallGraph callGraph = new CallGraph();
+        NewObjectNode non = (NewObjectNode) getNodeByIndex(10, flowGraph);
+        ObjectAllocation allocation = new ObjectAllocation(non);
+        Node<NodeState, Value> initialQuery = new Node<>(
+                new NodeState(non),
+                allocation
+        );
+
+        ForwardMerlinSolver solver = new ForwardMerlinSolver(callGraph, pointsTo, initialQuery);
+        solver.solve();
+        Collection<PointsToGraph.PointsToLocation> pts = pointsTo.getKnownValuesPointingTo(allocation);
+
+        dk.brics.tajs.flowgraph.jsnodes.Node endNode = getNodeByIndex(18, flowGraph);
+        Value queryVal = new Variable("valueToQuery", flowGraph.getMain());
+
+        System.out.println("Data-flow of " + non + " at " + endNode + ":");
+        System.out.println(pts.stream().filter(ptl -> ptl.getLocation().equals(endNode)).collect(Collectors.toSet()));
+
+        assert pts.contains(new PointsToGraph.PointsToLocation(endNode, queryVal));
+    }
+
+    @Test
+    public void backwardQueryPropReadWrite() {
+        FlowGraph flowGraph =
+                initializeFlowgraph("src/test/resources/js/callgraph/intraprocedural-tests/intraproceduralPropReadWrite.js");
+        System.out.println(flowGraph);
+        PointsToGraph pointsTo = new PointsToGraph();
+        CallGraph callGraph = new CallGraph();
+        Value queryVal = new Variable("valueToQuery", flowGraph.getMain());
+        dk.brics.tajs.flowgraph.jsnodes.Node endNode = getNodeByIndex(18, flowGraph);
+        Node<NodeState, Value> initialQuery = new Node<>(
+                new NodeState(endNode),
+                queryVal
+        );
+
+        BackwardMerlinSolver solver = new BackwardMerlinSolver(callGraph, pointsTo, initialQuery);
+        solver.solve();
+        Collection<Allocation> pts = pointsTo.getPointsToSet(endNode, queryVal);
+
+        NewObjectNode non = (NewObjectNode) getNodeByIndex(10, flowGraph);
+        ObjectAllocation allocation = new ObjectAllocation(non);
+        NewObjectNode otherNON = ((NewObjectNode) getNodeByIndex(8, flowGraph));
+        ObjectAllocation wrongAllocation = new ObjectAllocation(otherNON);
+
+        System.out.println("Points-To set of " + queryVal + " at " + endNode + ":");
+        System.out.println(pts);
+
+        assert pts.contains(allocation);
+        assert !pts.contains(wrongAllocation);
     }
 
 }

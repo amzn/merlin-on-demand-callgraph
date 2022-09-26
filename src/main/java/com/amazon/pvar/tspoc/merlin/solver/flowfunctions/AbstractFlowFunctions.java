@@ -20,13 +20,22 @@ import com.amazon.pvar.tspoc.merlin.solver.CallGraph;
 import com.amazon.pvar.tspoc.merlin.solver.ForwardMerlinSolver;
 import com.amazon.pvar.tspoc.merlin.solver.MerlinSolverFactory;
 import com.amazon.pvar.tspoc.merlin.solver.querygraph.QueryGraph;
+import dk.brics.tajs.flowgraph.FlowGraph;
 import dk.brics.tajs.flowgraph.Function;
 import dk.brics.tajs.flowgraph.jsnodes.CallNode;
+import dk.brics.tajs.flowgraph.jsnodes.ConstantNode;
 import dk.brics.tajs.flowgraph.jsnodes.DeclareFunctionNode;
+import dk.brics.tajs.flowgraph.jsnodes.NewObjectNode;
 import dk.brics.tajs.flowgraph.jsnodes.Node;
 import dk.brics.tajs.flowgraph.jsnodes.NodeVisitor;
+import dk.brics.tajs.flowgraph.jsnodes.ReadPropertyNode;
+import dk.brics.tajs.flowgraph.jsnodes.ReadVariableNode;
+import dk.brics.tajs.flowgraph.jsnodes.WritePropertyNode;
+import dk.brics.tajs.flowgraph.jsnodes.WriteVariableNode;
 import sync.pds.solver.SyncPDSSolver;
 import sync.pds.solver.nodes.CallPopNode;
+import sync.pds.solver.nodes.NodeWithLocation;
+import sync.pds.solver.nodes.PopNode;
 import sync.pds.solver.nodes.PushNode;
 import wpds.interfaces.State;
 
@@ -77,6 +86,22 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
                 nodeState,
                 value
         );
+    }
+
+    /**
+     * Given a function and index, returns the node located at that index
+     * @param index
+     * @param function
+     * @return
+     */
+    protected Node getNodeByIndex(int index, Function function) {
+        return function.getBlocks().stream()
+                .flatMap(basicBlock -> basicBlock.getNodes().stream())
+                .filter(n -> n instanceof Node)
+                .map(n -> ((Node) n))
+                .filter(n -> n.getIndex() == index)
+                .findAny()
+                .orElseThrow();
     }
 
     /**
@@ -149,23 +174,47 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
         nextStates.add(makeSPDSNode(n, v));
     }
 
-    protected void addSinglePushState(Node n, Value v, Node location, SyncPDSSolver.PDSSystem system) {
+    protected void addSingleCallPushState(Node n, Value v, Node location) {
         nextStates.add(
                 new PushNode<>(
                         makeNodeState(n),
                         v,
                         makeNodeState(location),
-                        system
+                        SyncPDSSolver.PDSSystem.CALLS
                 )
         );
     }
 
-    protected void addSinglePopState(Node n, Value v, SyncPDSSolver.PDSSystem system) {
+    protected void addSingleCallPopState(Node n, Value v) {
         nextStates.add(
                 new CallPopNode<>(
                         v,
-                        system,
+                        SyncPDSSolver.PDSSystem.CALLS,
                         makeNodeState(n)
+                )
+        );
+    }
+
+    protected void addSinglePropPushState(Node n, Value v, Property location) {
+        nextStates.add(
+                new PushNode<>(
+                        makeNodeState(n),
+                        v,
+                        location,
+                        SyncPDSSolver.PDSSystem.FIELDS
+                )
+        );
+    }
+
+    protected void addSinglePropPopState(Node n, Value v, Property p) {
+        nextStates.add(
+                new PopNode<>(
+                        new NodeWithLocation<>(
+                                makeNodeState(n),
+                                v,
+                                p
+                        ),
+                        SyncPDSSolver.PDSSystem.FIELDS
                 )
         );
     }
@@ -264,6 +313,71 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
         MerlinSolverFactory.removeCurrentActiveSolver();
         FlowFunctionUtil.allInvocationsFound.add(function);
         return solver.getPointsToGraph().getKnownFunctionInvocations(alloc);
+    }
+
+    /**
+     * Retrieves the variable associated with the base register for a ReadPropertyNode. The variable is always loaded
+     * into the base register in a ReadVariableNode that occurs one node before the ReadPropertyNode.
+     * @param n
+     * @return
+     */
+    protected Variable getBaseForReadPropertyNode(ReadPropertyNode n) {
+        ReadVariableNode baseRead = ((ReadVariableNode) getNodeByIndex(
+                n.getIndex() - 1,
+                n.getBlock().getFunction()
+        ));
+        return new Variable(baseRead.getVariableName(), n.getBlock().getFunction());
+    }
+
+    /**
+     * Retrieves the variable associated with the result register for a ReadPropertyNode. The variable is always written
+     * to from the result register in a WriteVariableNode that occurs one node after the ReadPropertyNode.
+     * @param n
+     * @return
+     */
+    protected Variable getResultForReadPropertyNode(ReadPropertyNode n) {
+        WriteVariableNode resultWrite = ((WriteVariableNode) getNodeByIndex(
+                n.getIndex() + 1,
+                n.getBlock().getFunction()
+        ));
+        return new Variable(resultWrite.getVariableName(), n.getBlock().getFunction());
+    }
+
+    /**
+     * Retrieves the variable associated with the base register for a WritePropertyNode. The variable is always loaded
+     * into the base register in a ReadVariableNode that occurs two nodes before the WritePropertyNode.
+     * @param n
+     * @return
+     */
+    protected Variable getBaseForWritePropertyNode(WritePropertyNode n) {
+        ReadVariableNode baseRead = ((ReadVariableNode) getNodeByIndex(
+                n.getIndex() - 2,
+                n.getBlock().getFunction()
+        ));
+        return new Variable(baseRead.getVariableName(), n.getBlock().getFunction());
+    }
+
+    /**
+     * Retrieves the variable associated with the value register for a WritePropertyNode. The variable is always loaded
+     * into the value register in a ReadVariableNode that occurs one node before the WritePropertyNode.
+     * @param n
+     * @return
+     */
+    protected Value getValForWritePropertyNode(WritePropertyNode n) {
+        Node node = getNodeByIndex(
+                n.getIndex() - 1,
+                n.getBlock().getFunction()
+        );
+        if (node instanceof ReadVariableNode baseRead) {
+            return new Variable(baseRead.getVariableName(), n.getBlock().getFunction());
+        } else if (node instanceof ConstantNode constantNode) {
+            return new ConstantAllocation(constantNode);
+        } else if (node instanceof NewObjectNode newObjectNode) {
+            return new ObjectAllocation(newObjectNode);
+        } else if (node instanceof DeclareFunctionNode declareFunctionNode) {
+            return new FunctionAllocation(declareFunctionNode);
+        }
+        throw new RuntimeException("Unknown type for WritePropertyNode predecessor: " + node.getClass());
     }
 
     protected static class FlowFunctionUtil {
