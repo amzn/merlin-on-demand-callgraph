@@ -446,7 +446,7 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     /**
-     * TODO
+     * No need to do anything special to handle begin loop nodes for forward analysis.
      * @param n
      */
     @Override
@@ -455,7 +455,7 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     /**
-     * TODO
+     * No need to do anything special to handle end loop nodes in the forward analysis.
      * @param n
      */
     @Override

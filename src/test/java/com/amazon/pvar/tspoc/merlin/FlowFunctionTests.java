@@ -30,11 +30,13 @@ import com.amazon.pvar.tspoc.merlin.solver.flowfunctions.BackwardFlowFunctions;
 import com.amazon.pvar.tspoc.merlin.solver.flowfunctions.ForwardFlowFunctions;
 import com.amazon.pvar.tspoc.merlin.solver.querygraph.QueryGraph;
 import dk.brics.tajs.flowgraph.FlowGraph;
+import dk.brics.tajs.flowgraph.jsnodes.BeginLoopNode;
 import dk.brics.tajs.flowgraph.jsnodes.BeginWithNode;
 import dk.brics.tajs.flowgraph.jsnodes.BinaryOperatorNode;
 import dk.brics.tajs.flowgraph.jsnodes.CallNode;
 import dk.brics.tajs.flowgraph.jsnodes.ConstantNode;
 import dk.brics.tajs.flowgraph.jsnodes.DeclareFunctionNode;
+import dk.brics.tajs.flowgraph.jsnodes.EndLoopNode;
 import dk.brics.tajs.flowgraph.jsnodes.IfNode;
 import dk.brics.tajs.flowgraph.jsnodes.NewObjectNode;
 import dk.brics.tajs.flowgraph.jsnodes.Node;
@@ -818,5 +820,120 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
         Set<State> nextStates = ff.computeNextStates(wpn, base);
         logTest(wpn, base, nextStates, false);
         assert nextStates.contains(target);
+    }
+
+    @Test
+    public void beginLoopForward() {
+        FlowGraph flowGraph =
+                initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/loop.js");
+        ForwardFlowFunctions ff = new ForwardFlowFunctions(new CallGraph());
+        BeginLoopNode beginLoopNode = (BeginLoopNode) flowGraph.getMain().getBlocks().stream()
+                .flatMap(basicBlock -> basicBlock.getNodes().stream())
+                .filter(n -> n instanceof BeginLoopNode)
+                .findFirst()
+                .orElseThrow();
+
+        Value val = new Variable("x", flowGraph.getMain());
+        Set<State> nextStates = ff.computeNextStates(beginLoopNode, val);
+        Set<sync.pds.solver.nodes.Node<NodeState, Value>> targets =
+                ForwardFlowFunctions
+                        .invertMapping(FlowGraphBuilder.makeNodePredecessorMap(flowGraph.getMain()))
+                        .get(beginLoopNode)
+                        .stream()
+                        .map(abstractNode ->
+                                new sync.pds.solver.nodes.Node<>(
+                                        new NodeState((Node) abstractNode),
+                                        val
+                                )
+                        )
+                        .collect(Collectors.toSet());
+
+        targets.forEach(target -> {
+            assert nextStates.contains(target);
+        });
+
+        logTest(beginLoopNode, val, nextStates, false);
+    }
+
+    @Test
+    public void beginLoopBackward() {
+        FlowGraph flowGraph =
+                initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/loop.js");
+        BackwardFlowFunctions ff = new BackwardFlowFunctions(new CallGraph());
+        BeginLoopNode beginLoopNode = (BeginLoopNode) getNodeByIndex(15, flowGraph);
+
+        Value val = new Variable("x", flowGraph.getMain());
+        Set<State> nextStates = ff.computeNextStates(beginLoopNode, val);
+        Set<sync.pds.solver.nodes.Node<NodeState, Value>> targets =
+                FlowGraphBuilder.makeNodePredecessorMap(flowGraph.getMain())
+                        .get(beginLoopNode)
+                        .stream()
+                        .map(abstractNode ->
+                                new sync.pds.solver.nodes.Node<>(
+                                        new NodeState((Node) abstractNode),
+                                        val
+                                )
+                        )
+                        .collect(Collectors.toSet());
+
+        logTest(beginLoopNode, val, nextStates, true);
+        targets.forEach(target -> {
+            assert nextStates.contains(target);
+        });
+    }
+
+    @Test
+    public void endLoopForward() {
+        FlowGraph flowGraph =
+                initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/loop.js");
+        ForwardFlowFunctions ff = new ForwardFlowFunctions(new CallGraph());
+        EndLoopNode end = (EndLoopNode) getNodeByIndex(29, flowGraph);
+        Value val = new Variable("x", flowGraph.getMain());
+        Set<State> nextStates = ff.computeNextStates(end, val);
+        Set<sync.pds.solver.nodes.Node<NodeState, Value>> targets =
+                ForwardFlowFunctions
+                        .invertMapping(FlowGraphBuilder.makeNodePredecessorMap(flowGraph.getMain()))
+                        .get(end)
+                        .stream()
+                        .map(abstractNode ->
+                                new sync.pds.solver.nodes.Node<>(
+                                        new NodeState((Node) abstractNode),
+                                        val
+                                )
+                        )
+                        .collect(Collectors.toSet());
+
+        targets.forEach(target -> {
+            assert nextStates.contains(target);
+        });
+
+        logTest(end, val, nextStates, false);
+    }
+
+    @Test
+    public void endLoopBackward() {
+        FlowGraph flowGraph =
+                initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/loop.js");
+        BackwardFlowFunctions ff = new BackwardFlowFunctions(new CallGraph());
+        EndLoopNode endLoopNode = (EndLoopNode) getNodeByIndex(29, flowGraph);
+
+        Value val = new Variable("x", flowGraph.getMain());
+        Set<State> nextStates = ff.computeNextStates(endLoopNode, val);
+        Set<sync.pds.solver.nodes.Node<NodeState, Value>> targets =
+                FlowGraphBuilder.makeNodePredecessorMap(flowGraph.getMain())
+                        .get(endLoopNode)
+                        .stream()
+                        .map(abstractNode ->
+                                new sync.pds.solver.nodes.Node<>(
+                                        new NodeState((Node) abstractNode),
+                                        val
+                                )
+                        )
+                        .collect(Collectors.toSet());
+
+        logTest(endLoopNode, val, nextStates, true);
+        targets.forEach(target -> {
+            assert nextStates.contains(target);
+        });
     }
 }
