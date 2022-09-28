@@ -9,7 +9,7 @@ This directory contains resources for empirically evaluating Merlin
 
 ## Setup
 - Follow all installation and setup steps for [Jam](https://github.com/cs-au-dk/ISSTA-2021-Paper-156) and [nodeprof.js](https://github.com/Haiyang-Sun/nodeprof.js)
-- run the `eval-setup.sh` script to install the evaluation dataset
+- run the `eval-setup.sh` script to install the evaluation dataset and fix a few minor path errors in Jam
 
 ## Running
 The full evaluation can be run using `./eval-run.sh -j <path-to-jam-dir> -n <path-to-nodeprof-dir>`
