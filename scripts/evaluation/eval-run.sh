@@ -26,7 +26,7 @@ if [ -z "$PATH_TO_NODEPROF" ] ; then
   exit 1
 fi
 
-# Associative array of benchmarks to their respective main files
+# Associative array of benchmarks to their respective main files, using evaluation directory as base for the relative path
 declare -A BENCHMARKS=(
   ["makeappicon"]="eval-targets/node_modules/makeappicon/bin/index.js"
   ["toucht"]="eval-targets/node_modules/toucht/bin/toucht"
@@ -41,6 +41,21 @@ declare -A BENCHMARKS=(
   ["openbadges-issuer"]="eval-targets/node_modules/openbadges-issuer/cli.js"
 )
 
+# Associative array of benchmarks to their respective main files, using the benchmark directory as base for the relative path
+declare -A BENCHMARKS_JAM=(
+  ["makeappicon"]="bin/index.js"
+  ["toucht"]="bin/toucht"
+  ["spotify-terminal"]="bin/music"
+  ["ragan-module"]="bin/greeter.js"
+  ["npm-git-snapshot"]="bin/npm-git-snapshot"
+  ["nodetree"]="index.js"
+  ["jwtnoneify"]="index.js"
+  ["foxx-framework"]="bin/foxxy"
+  ["npmgenerate"]="bin/ngen.js"
+  ["smrti"]="app.js"
+  ["openbadges-issuer"]="cli.js"
+)
+
 # Jam expects an environment variable NODE_HOME pointing to GraalVM's node distribution
 export NODE_HOME="${PATH_TO_NODEPROF}/graal/sdk/latest_graalvm_home"
 
@@ -52,6 +67,16 @@ fi
 echo "Generating Dynamic CGs"
 for BENCHMARK in "${!BENCHMARKS[@]}"; do
   bash dyn-cg.sh -j "${PATH_TO_JAM}" -b "${BENCHMARKS[$BENCHMARK]}" -n "${BENCHMARK}"
+done
+
+# Generate Jam's CGs
+if [ ! -d "jam_cgs" ] ; then
+  mkdir "jam_cgs"
+fi
+
+echo "Generating Jam's Static CGs"
+for BENCHMARK in "${!BENCHMARKS_JAM[@]}"; do
+  bash jam-cg.sh -j "${PATH_TO_JAM}" -b "${BENCHMARKS_JAM[$BENCHMARK]}" -n "${BENCHMARK}"
 done
 
 # TODO: the rest of the eval
