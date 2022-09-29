@@ -318,4 +318,33 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
         assert !pts.contains(wrongAllocation);
     }
 
+    @Test
+    public void backwardLoop() {
+        FlowGraph flowGraph =
+                initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/loop.js");
+        PointsToGraph pointsTo = new PointsToGraph();
+        CallGraph callGraph = new CallGraph();
+        Value queryVal = new Variable("x", flowGraph.getMain());
+        dk.brics.tajs.flowgraph.jsnodes.Node endNode = getNodeByIndex(30, flowGraph);
+        Node<NodeState, Value> initialQuery = new Node<>(
+                new NodeState(endNode),
+                queryVal
+        );
+
+        BackwardMerlinSolver solver = new BackwardMerlinSolver(callGraph, pointsTo, initialQuery);
+        solver.solve();
+        Collection<Allocation> pts = pointsTo.getPointsToSet(endNode, queryVal);
+
+        NewObjectNode non = (NewObjectNode) getNodeByIndex(8, flowGraph);
+        ObjectAllocation allocation = new ObjectAllocation(non);
+        NewObjectNode otherNON = ((NewObjectNode) getNodeByIndex(21, flowGraph));
+        ObjectAllocation otherAlloc = new ObjectAllocation(otherNON);
+
+        System.out.println("Points-To set of " + queryVal + " at " + endNode + ":");
+        System.out.println(pts);
+
+        assert pts.contains(allocation);
+        assert pts.contains(otherAlloc);
+    }
+
 }

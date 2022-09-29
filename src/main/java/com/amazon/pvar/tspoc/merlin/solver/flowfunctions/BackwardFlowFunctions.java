@@ -424,7 +424,7 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     /**
-     * TODO
+     * No need to do anything special to handle begin loop nodes for backward analysis.
      * @param n
      */
     @Override
@@ -433,7 +433,7 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     /**
-     * TODO
+     * No need to do anything special to handle end loop nodes for backward analysis.
      * @param n
      */
     @Override
