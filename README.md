@@ -9,7 +9,12 @@ ES5 language features are supported at the moment.
 
 ## Building and Running
 
+### Installing dependencies
 First, check out the submodules by running `git submodule update --init --recursive`.
+
+Then you will need `npm` installed. We recommend using [Node Version Manager (nvm)](https://github.com/nvm-sh/nvm) to install node and npm. Once installed, run:
+`cd tajs_vr/extras/babel`
+`npm install`
 
 This project is built via [sbt](https://www.scala-sbt.org). Please follow the official [instructions](https://www.scala-sbt.org/1.x/docs/Setup.html) for installing sbt.
 
@@ -27,6 +32,8 @@ For example, if you are using using the Amazon Coretto SDK on Mac OSX, the follo
 -java-home
 /Library/Java/JavaVirtualMachines/amazon-corretto-16.jdk/Contents/Home
 ```
+
+### Running Merlin
 
 After that, the project can be built by running `sbt compile` and run via `sbt run`.
 
