@@ -25,6 +25,7 @@ import dk.brics.tajs.flowgraph.jsnodes.CallNode;
 import dk.brics.tajs.flowgraph.jsnodes.DeclareFunctionNode;
 import sync.pds.solver.nodes.Node;
 
+import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.DirectoryStream;
@@ -36,10 +37,52 @@ import java.util.Set;
 
 public class Main {
 
-    public static synchronized FlowGraph flowGraphForProgram(String jsFile, boolean debugFlag) {
+    // Create additional config values, see https://github.com/cs-au-dk/TAJS#environment-configuration for overview
+    // and tajs_vs/src/dk/brics/tajs/TAJSEnvironmentConfig.java for all options
+    public static File makeTAJSConfigFile(Path tajsRootDir) throws IOException {
+
+        // Calculate path to tajs_vr/extras/babel/node_modules/.bin/babel ensuring that node_modules exists
+        Path babelPathPrefix = (tajsRootDir.resolve(Path.of("extras", "babel", "node_modules"))).toAbsolutePath();
+        if (!babelPathPrefix.toFile().exists()) {
+            throw new IOException("Path to required node_modules - %s - does not exist. Did you forget to run `npm install` in %s"
+                                  .formatted(babelPathPrefix.toString(), babelPathPrefix.getParent().toString())
+                                  );
+        }
+        String babelCmd = System.getProperty("os.name").startsWith("Windows") ? "babel.cmd" : "babel";
+        Path babelPath = babelPathPrefix.resolve(Path.of(".bin", babelCmd));
+
+ 
+        // write a tajs.properties file to a temporary directory
+        File config = File.createTempFile("tajs", ".properties");
+        FileWriter writer = new FileWriter(config);
+        writer.write("""
+            tajs = %s
+            babel = %s
+        """.formatted(tajsRootDir.getParent().toAbsolutePath().toString(), babelPath.toAbsolutePath().toString()));
+        writer.close();
+ 
+        // return the new tajs.properties file
+        return config;
+    }
+
+    public static synchronized FlowGraph flowGraphForProgram(String jsFileRel, boolean debugFlag) {
+
+        Path merlinRootDir = Paths.get(".").toAbsolutePath().normalize(); // pwd should be the root, merlin-on-demand-callgraph directory
+        Path jsFile = merlinRootDir.resolve(jsFileRel);
+
+        // set up options for TAJS Flowgraph
         dk.brics.tajs.options.Options.get().disableControlSensitivity();
         dk.brics.tajs.options.Options.get().enableTest();
-        String[] inputs = { jsFile };
+
+        Path tajsRootDir = merlinRootDir.resolve(Path.of("tajs_vr"));
+        String tajsConfigFileStr = "";
+        try {
+            tajsConfigFileStr = makeTAJSConfigFile(tajsRootDir).getAbsolutePath().toString();
+        } catch (IOException e) {
+            throw new RuntimeException("Could not generate configuration for tajsVR flowgraph construction: " + e.getMessage());
+        }
+        
+        String[] inputs = { jsFile.toAbsolutePath().toString(), "-babel", "-config", tajsConfigFileStr };
         var analysis = dk.brics.tajs.Main.init(inputs, null);
         var flowGraph = analysis.getSolver().getFlowGraph();
         return flowGraph;
@@ -94,10 +137,10 @@ public class Main {
         System.out.println("Time per query:\t\t\t" + timePerQuery + "ms");
     }
 
-    private static void runExperiment(String filename, FileWriter outputWriter) {
+    private static void runExperiment(String jsFile, FileWriter outputWriter) {
         CallGraph fullCg = new CallGraph();
         boolean debugFlag = ExperimentOptions.dumpFlowGraph();
-        FlowGraph flowGraph = flowGraphForProgram(filename, debugFlag);
+        FlowGraph flowGraph = flowGraphForProgram(jsFile, debugFlag);
         Set<Node<NodeState, Value>> callSiteQueries = ExperimentUtils.getAllCallSiteQueries(flowGraph);
         int count = callSiteQueries.size();
         if (count > ExperimentUtils.Statistics.getMaxQueries()) {

@@ -428,6 +428,7 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
         logTest(wvn, val2, nextStates2, false);
     }
 
+    @Ignore("Does not work if babel is enabled since unsupported.js contains a `with` and babel is in strict mode which forbids `with`")
     @Test
     public void testUnsupportedBackward() {
         FlowGraph flowGraph =
@@ -444,6 +445,7 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
         logTest(bwn, val, nextStates, true);
     }
 
+    @Ignore("Does not work if babel is enabled since unsupported.js contains a `with` and babel is in strict mode which forbids `with`")
     @Test
     public void testUnsupportedForward() {
         FlowGraph flowGraph =
