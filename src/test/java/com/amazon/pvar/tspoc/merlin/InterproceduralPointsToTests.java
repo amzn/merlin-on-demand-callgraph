@@ -543,4 +543,26 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
         assert pts.contains(new ObjectAllocation(((NewObjectNode) getNodeByIndex(13, flowGraph))));
         assert pts.size() == 1;
     }
+
+    @Test
+    public void closureParamReassign() {
+        FlowGraph flowGraph =
+                initializeFlowgraph("src/test/resources/js/callgraph/interprocedural-tests/closureParamReassign.js");
+        dk.brics.tajs.flowgraph.jsnodes.Node queryNode = getNodeByIndex(36, flowGraph);
+        Value queryVal = new Variable("something", queryNode.getBlock().getFunction());
+        Node<NodeState, Value> initialQuery = new Node<>(
+                new NodeState(queryNode),
+                queryVal
+        );
+
+        BackwardMerlinSolver solver = MerlinSolverFactory.getNewBackwardSolver(initialQuery);
+        initializeQueryGraph(solver);
+        solver.solve();
+        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal);
+
+        printPointsTo(queryVal, queryNode, pts);
+        assert pts.contains(new ObjectAllocation(((NewObjectNode) getNodeByIndex(23, flowGraph))));
+        assert pts.contains(new ObjectAllocation(((NewObjectNode) getNodeByIndex(8, flowGraph))));
+        assert pts.size() == 2;
+    }
 }
