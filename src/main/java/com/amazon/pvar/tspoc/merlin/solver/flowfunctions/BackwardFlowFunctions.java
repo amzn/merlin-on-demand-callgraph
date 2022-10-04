@@ -498,9 +498,9 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
                 if (!queryVar.isVisibleIn(invokeScope)) {
                     // If QueryVar isn't visible at the call site, we should move out one scope from the current
                     // function and find what queryVar could point to in the invocation scope.
-                    getPredecessors(containingFunction.getNode()).forEach(pred -> {
-                        addSingleState(pred, queryVar);
-                    });
+                    Node outerScopeReturnNode =
+                            ((Node) containingFunction.getNode().getBlock().getFunction().getOrdinaryExit().getFirstNode());
+                    addSingleState(outerScopeReturnNode, queryVar);
                 } else {
                     addCallPopState(invoke, queryVar);
                 }
