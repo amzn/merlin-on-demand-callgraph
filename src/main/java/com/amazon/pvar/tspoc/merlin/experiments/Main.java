@@ -90,30 +90,32 @@ public class Main {
 
     public static void main(String[] args) {
         ExperimentOptions.parse(args);
+
+        Path directory = null; 
+        String filter = "";
         if (ExperimentOptions.isAnalyzeDirectory()) {
-            Path directory = Paths.get(ExperimentOptions.getAnalysisDir());
-            try (DirectoryStream<Path> directoryStream = Files.newDirectoryStream(directory, "*.js");
-                    FileWriter resultWriter = new FileWriter(ExperimentOptions.getOutputFile())) {
-                directoryStream.forEach(jsFile -> {
-                    ExperimentUtils.Statistics.incrementTotalFiles();
-                    try {
-                        resultWriter.write("Analyzing " + jsFile + "\n");
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                    runExperiment(jsFile.toString(), resultWriter);
-                });
-            } catch (IOException e) {
-                e.printStackTrace();
-                System.exit(1);
-            }
+            directory = Paths.get(ExperimentOptions.getAnalysisDir());
+            filter = "*.js";
         } else {
-            String filename = ExperimentOptions.getAnalysisFile();
-            try (FileWriter resultWriter = new FileWriter(ExperimentOptions.getOutputFile())) {
-                runExperiment(filename, resultWriter);
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
+            Path analysisFile = Paths.get(ExperimentOptions.getAnalysisFile());
+            directory = analysisFile.getParent();
+            filter = analysisFile.getFileName().toString();
+        }
+
+        try (DirectoryStream<Path> directoryStream = Files.newDirectoryStream(directory, filter);
+                FileWriter resultWriter = new FileWriter(ExperimentOptions.getOutputFile())) {
+            directoryStream.forEach(jsFile -> {
+                ExperimentUtils.Statistics.incrementTotalFiles();
+                try {
+                    resultWriter.write("Analyzing " + jsFile + "\n");
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+                runExperiment(jsFile.toString(), resultWriter);
+            });
+        } catch (IOException e) {
+            e.printStackTrace();
+            System.exit(1);
         }
 
         // Printing statistics
@@ -184,10 +186,12 @@ public class Main {
         ExperimentUtils.Statistics.incrementTotalTime(timer.getTotalElapsed());
         ExperimentUtils.Statistics.incrementCGEdgesFound(fullCg.size());
         try {
+            long elapsedTimeMs = timer.getTotalElapsed(); 
+            double meanQueryTime = (count > 0) ? elapsedTimeMs / count : elapsedTimeMs;
             outputWriter.write("Full CG for program:\n");
-            outputWriter.write(fullCg.toString() + "\n");
-            outputWriter.write("Total elapsed time: " + timer.getTotalElapsed() + "ms\n");
-            outputWriter.write("Mean query time: " + timer.getTotalElapsed() / count + "ms\n\n");
+            outputWriter.write(fullCg.toJSON() + "\n");
+            outputWriter.write("Total elapsed time: " + elapsedTimeMs + "ms\n");
+            outputWriter.write("Mean query time: " + meanQueryTime + "ms\n\n");
         } catch (IOException e) {
             e.printStackTrace();
         }
