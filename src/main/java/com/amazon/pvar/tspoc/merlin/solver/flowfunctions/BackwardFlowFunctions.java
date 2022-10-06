@@ -18,6 +18,7 @@ package com.amazon.pvar.tspoc.merlin.solver.flowfunctions;
 import com.amazon.pvar.tspoc.merlin.ir.*;
 import com.amazon.pvar.tspoc.merlin.solver.BackwardMerlinSolver;
 import com.amazon.pvar.tspoc.merlin.solver.CallGraph;
+import com.amazon.pvar.tspoc.merlin.solver.MerlinSolver;
 import com.amazon.pvar.tspoc.merlin.solver.MerlinSolverFactory;
 import com.amazon.pvar.tspoc.merlin.solver.PointsToGraph;
 import com.amazon.pvar.tspoc.merlin.solver.querygraph.QueryGraph;
@@ -25,6 +26,11 @@ import dk.brics.tajs.flowgraph.AbstractNode;
 import dk.brics.tajs.flowgraph.Function;
 import dk.brics.tajs.flowgraph.jsnodes.*;
 import dk.brics.tajs.js2flowgraph.FlowGraphBuilder;
+import sync.pds.solver.SyncPDSSolver;
+import sync.pds.solver.SyncPDSUpdateListener;
+import sync.pds.solver.nodes.CallPopNode;
+import sync.pds.solver.nodes.NodeWithLocation;
+import sync.pds.solver.nodes.PopNode;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -482,44 +488,23 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
             invokes.forEach(invoke -> {
                 try {
                     Register reg = new Register(invoke.getArgRegister(paramIndex), invoke.getBlock().getFunction());
-                    addCallPopState(invoke, reg);
+                    addSingleState(invoke, reg);
                 } catch (ArrayIndexOutOfBoundsException e) {}
             });
         } else {
-            // Step backward from the invocation
-            Function declaringFunction = queryVar.getDeclaringFunction();
-            usedRegisters.clear();
-            if (declaringFunction.getParameterNames().contains(queryVar.getVarName())) {
-                // if the variable being queried is a parameter, we need to do some additional work to resolve
-                // what the parameter could point to.
-                int paramIndex = declaringFunction.getParameterNames().indexOf(queryVar.getVarName());
-
-                // For query value p, which is a parameter of some function,
-                // consult the call graph to determine what p could point to
-                Set<Value> argsPointingToQueryVar = callGraph
-                        .getCallers(declaringFunction)
-                        .stream()
-                        .map(callNode -> {
-                            try {
-                                int registerID = callNode.getArgRegister(paramIndex);
-                                return new Register(registerID, callNode.getBlock().getFunction());
-                            } catch (ArrayIndexOutOfBoundsException e) {
-                                // a call site may call a function with fewer than the required arguments
-                                return null;
-                            }
-                        })
-                        .filter(Objects::nonNull)
-                        .collect(Collectors.toSet());
-                invokes.forEach(invoke -> {
-                    argsPointingToQueryVar.forEach(argRegister -> {
-                        addCallPopState(invoke, argRegister);
-                    });
-                });
-            } else {
-                invokes.forEach(invoke -> {
+            invokes.forEach(invoke -> {
+                Function invokeScope = invoke.getBlock().getFunction();
+                // Closure handling
+                if (!queryVar.isVisibleIn(invokeScope)) {
+                    // If QueryVar isn't visible at the call site, we should move out one scope from the current
+                    // function and find what queryVar could point to in the invocation scope.
+                    Node outerScopeReturnNode =
+                            ((Node) containingFunction.getNode().getBlock().getFunction().getOrdinaryExit().getFirstNode());
+                    addSingleState(outerScopeReturnNode, queryVar);
+                } else {
                     addCallPopState(invoke, queryVar);
-                });
-            }
+                }
+            });
         }
     }
 
