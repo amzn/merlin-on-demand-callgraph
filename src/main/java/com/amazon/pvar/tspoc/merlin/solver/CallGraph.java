@@ -18,6 +18,7 @@ package com.amazon.pvar.tspoc.merlin.solver;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Multimap;
 import dk.brics.tajs.flowgraph.Function;
+import dk.brics.tajs.flowgraph.SourceLocation;
 import dk.brics.tajs.flowgraph.jsnodes.CallNode;
 
 import java.util.*;
@@ -69,6 +70,17 @@ public class CallGraph implements Iterable<CallGraph.Edge> {
         @Override
         public int hashCode() {
             return Objects.hash(callSite, callTarget);
+        }     
+        
+
+        public String toJSON() {
+            return """
+                {
+                  "from": %s,
+                  "to": %s
+                }
+            """.formatted(CallGraph.sourceLocationToJSON(callSite.getSourceLocation()), 
+                          CallGraph.sourceLocationToJSON(callTarget.getSourceLocation())).trim();
         }
 
         @Override
@@ -155,6 +167,13 @@ public class CallGraph implements Iterable<CallGraph.Edge> {
         };
     }
 
+    public String toJSON() {
+        return edgeSet.stream()
+                .map(e -> e.toJSON() + ",\n")
+                .collect(Collectors.joining())
+                .strip();
+    }
+
     @Override
     public String toString() {
         return edgeSet.stream()
@@ -163,4 +182,22 @@ public class CallGraph implements Iterable<CallGraph.Edge> {
                 .strip();
     }
 
+    private static String sourceLocationToJSON(SourceLocation src) {
+        return """
+            {
+              "source": "%s",
+              "start": {
+                "line": %d,
+                "column": %d
+              },
+              "end": {
+                "line": %d,
+                "column": %d
+              }
+            }    
+        """.formatted(src.getLocation().getFile().toString(), 
+                      src.getLineNumber(), src.getColumnNumber(), 
+                      src.getEndLineNumber(), src.getEndColumnNumber()
+                     ).trim();       
+    }
 }
