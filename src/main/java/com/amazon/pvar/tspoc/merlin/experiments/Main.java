@@ -138,17 +138,17 @@ public class Main {
     }
 
     private static void runExperiment(String jsFile, FileWriter outputWriter) {
-        CallGraph fullCg = new CallGraph();
+        CallGraph cg = new CallGraph();
         boolean debugFlag = ExperimentOptions.dumpFlowGraph();
         FlowGraph flowGraph = flowGraphForProgram(jsFile, debugFlag);
-        Set<Node<NodeState, Value>> callSiteQueries = ExperimentUtils.getAllCallSiteQueries(flowGraph);
-        int count = callSiteQueries.size();
+        Set<Node<NodeState, Value>> taintQueries = ExperimentUtils.getTaintQueries(flowGraph);
+        int count = taintQueries.size();
         if (count > ExperimentUtils.Statistics.getMaxQueries()) {
             ExperimentUtils.Statistics.setMaxQueries(count);
         }
         ExperimentUtils.Timer<Node<NodeState, Value>> timer = new ExperimentUtils.Timer<>();
         timer.start();
-        callSiteQueries.forEach(query -> {
+        taintQueries.forEach(query -> {
             ExperimentUtils.Statistics.incrementTotalQueries();
             QueryGraph.reset();
             MerlinSolverFactory.reset();
@@ -171,7 +171,7 @@ public class Main {
             } catch (IOException e) {
                 e.printStackTrace();
             }
-            solver.getCallGraph().forEach(fullCg::addEdge);
+            solver.getCallGraph().forEach(cg::addEdge);
             timer.split(query);
             long split = timer.getSplit(query);
             try {
@@ -182,10 +182,10 @@ public class Main {
         });
         timer.stop();
         ExperimentUtils.Statistics.incrementTotalTime(timer.getTotalElapsed());
-        ExperimentUtils.Statistics.incrementCGEdgesFound(fullCg.size());
+        ExperimentUtils.Statistics.incrementCGEdgesFound(cg.size());
         try {
-            outputWriter.write("Full CG for program:\n");
-            outputWriter.write(fullCg.toString() + "\n");
+            outputWriter.write("CG for program:\n");
+            outputWriter.write(cg.toString() + "\n");
             outputWriter.write("Total elapsed time: " + timer.getTotalElapsed() + "ms\n");
             outputWriter.write("Mean query time: " + timer.getTotalElapsed() / count + "ms\n\n");
         } catch (IOException e) {
