@@ -20,20 +20,30 @@ import com.amazon.pvar.tspoc.merlin.ir.NodeState;
 import com.amazon.pvar.tspoc.merlin.ir.Register;
 import com.amazon.pvar.tspoc.merlin.ir.Value;
 import com.google.common.base.Stopwatch;
+import dk.brics.tajs.flowgraph.BasicBlock;
 import dk.brics.tajs.flowgraph.FlowGraph;
 import dk.brics.tajs.flowgraph.Function;
 import dk.brics.tajs.flowgraph.SourceLocation;
 import dk.brics.tajs.flowgraph.jsnodes.CallNode;
 import dk.brics.tajs.flowgraph.jsnodes.DeclareFunctionNode;
+import dk.brics.tajs.flowgraph.jsnodes.LoadNode;
+import dk.brics.tajs.flowgraph.jsnodes.ReadPropertyNode;
+import dk.brics.tajs.flowgraph.jsnodes.ReadVariableNode;
 import dk.brics.tajs.util.Collectors;
 import sync.pds.solver.nodes.Node;
 
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileReader;
+import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 public class ExperimentUtils {
 
     private static final Random random = new Random();
+    public static final Set<String> SINKS = new HashSet<>();
 
     /**
      * Returns a query for the invoked function at a call site
@@ -61,7 +71,57 @@ public class ExperimentUtils {
                 )
                 .collect(java.util.stream.Collectors.toSet());
     }
-    
+
+    public static Set<Node<NodeState, Value>> getTaintQueries(FlowGraph flowGraph) {
+        readNodeSinks();
+        return flowGraph.getFunctions().stream()
+                .flatMap(f -> f.getBlocks().stream())
+                .flatMap(b -> b.getNodes().stream())
+                .filter(abstractNode -> {
+                    if (abstractNode instanceof ReadVariableNode rvn) {
+                        return SINKS.contains(rvn.getVariableName());
+                    } else if (abstractNode instanceof ReadPropertyNode rpn) {
+                        return SINKS.contains(rpn.getPropertyString());
+                    }
+                    return false;
+                })
+                .map(abstractNode -> getQueriesAtSink(((LoadNode) abstractNode)))
+                .flatMap(Collection::stream)
+                .collect(java.util.stream.Collectors.toSet());
+    }
+
+    private static Set<Node<NodeState, Value>> getQueriesAtSink(LoadNode node) {
+        Function containingFunction = node.getBlock().getFunction();
+        return node.getBlock().getSingleSuccessor().getNodes().stream()
+                .filter(abstractNode -> abstractNode instanceof CallNode cn &&
+                        (cn.getFunctionRegister() == node.getResultRegister() ||
+                        SINKS.contains(cn.getPropertyString())))
+                .map(abstractNode -> ((CallNode) abstractNode))
+                .flatMap(cn -> {
+                    Set<Node<NodeState, Value>> argQueries = new HashSet<>();
+                    // Add a query for each value passed into the taint sink
+                    for (int i = 0 ; i < cn.getNumberOfArgs() ; i++) {
+                        argQueries.add(
+                                new Node<>(
+                                        new NodeState(cn),
+                                        new Register(cn.getArgRegister(i), containingFunction)
+                                )
+                        );
+                    }
+                    if (SINKS.contains(cn.getPropertyString())) {
+                        // if the taint sink is a property of some value, issue a query for that value
+                        argQueries.add(
+                                new Node<>(
+                                        new NodeState(cn),
+                                        new Register(cn.getFunctionRegister(), containingFunction)
+                                )
+                        );
+                    }
+                    return argQueries.stream();
+                })
+                .collect(java.util.stream.Collectors.toSet());
+    }
+
     private static Map<CallNode, Register> getCallSiteMap(FlowGraph flowGraph) {
         return flowGraph
                 .getFunctions()
@@ -137,6 +197,15 @@ public class ExperimentUtils {
             }
         }
         return false;
+    }
+
+    public static void readNodeSinks() {
+        File nodeSinks = ExperimentOptions.getNodeSinkFile();
+        try (BufferedReader reader = new BufferedReader(new FileReader(nodeSinks))) {
+            SINKS.addAll(reader.lines().toList());
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     public static class Timer<T> {

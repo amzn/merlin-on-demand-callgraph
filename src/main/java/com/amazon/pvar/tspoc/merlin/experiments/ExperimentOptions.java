@@ -17,13 +17,26 @@ package com.amazon.pvar.tspoc.merlin.experiments;
 
 import org.apache.commons.cli.*;
 
+import java.io.File;
+
 public class ExperimentOptions {
+
+    // Default sink list is adapted from taser: https://github.com/cs-au-dk/taser/blob/master/src/DefaultPolicy.ts
+    private static final String SINK_DEFAULT_LOCATION = "scripts/evaluation/sinks.txt";
 
     private static final Option analysisDir = Option.builder("d")
             .argName("dir")
             .hasArg()
             .longOpt("directory")
             .desc("The directory containing the .js files to be analyzed. One of -d or -f must be specified.")
+            .build();
+
+    private static final Option nodeSinkFile = Option.builder("s")
+            .argName("sinkFile")
+            .hasArg()
+            .longOpt("node-sink-file")
+            .desc("A file containing the list of method names that Merlin should consider as taint sinks. If this " +
+                    "option is not provided, Merlin will look in scripts/evaluation/sinks.txt.")
             .build();
 
     private static final Option analysisFile = Option.builder("f")
@@ -55,6 +68,7 @@ public class ExperimentOptions {
             .addOption(analysisFile)
             .addOption(dumpFlowGraph)
             .addOption(outputFile)
+            .addOption(nodeSinkFile)
             .addOption(help);
 
     private static CommandLine commandLine;
@@ -89,5 +103,13 @@ public class ExperimentOptions {
 
     public static String getOutputFile() {
         return commandLine.getOptionValue("o");
+    }
+
+    public static File getNodeSinkFile() {
+        if (!commandLine.hasOption("s")) {
+            return new File(SINK_DEFAULT_LOCATION);
+        } else {
+            return new File(commandLine.getOptionValue("s"));
+        }
     }
 }
