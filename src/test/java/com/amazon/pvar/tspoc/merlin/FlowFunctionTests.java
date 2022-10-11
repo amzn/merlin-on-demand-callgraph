@@ -21,14 +21,10 @@ import com.amazon.pvar.tspoc.merlin.ir.Property;
 import com.amazon.pvar.tspoc.merlin.ir.Register;
 import com.amazon.pvar.tspoc.merlin.ir.Value;
 import com.amazon.pvar.tspoc.merlin.ir.Variable;
-import com.amazon.pvar.tspoc.merlin.solver.BackwardMerlinSolver;
-import com.amazon.pvar.tspoc.merlin.solver.CallGraph;
-import com.amazon.pvar.tspoc.merlin.solver.ForwardMerlinSolver;
-import com.amazon.pvar.tspoc.merlin.solver.MerlinSolverFactory;
-import com.amazon.pvar.tspoc.merlin.solver.PointsToGraph;
+import com.amazon.pvar.tspoc.merlin.livecollections.Scheduler;
+import com.amazon.pvar.tspoc.merlin.solver.*;
 import com.amazon.pvar.tspoc.merlin.solver.flowfunctions.BackwardFlowFunctions;
 import com.amazon.pvar.tspoc.merlin.solver.flowfunctions.ForwardFlowFunctions;
-import com.amazon.pvar.tspoc.merlin.solver.querygraph.QueryGraph;
 import dk.brics.tajs.flowgraph.FlowGraph;
 import dk.brics.tajs.flowgraph.jsnodes.BeginLoopNode;
 import dk.brics.tajs.flowgraph.jsnodes.BeginWithNode;
@@ -73,7 +69,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void unaryOperatorBackward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/unaryOperator.js");
-        BackwardFlowFunctions ff = new BackwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        BackwardFlowFunctions ff = new BackwardFlowFunctions(null, queryManager);
         UnaryOperatorNode uon = (UnaryOperatorNode) flowGraph.getMain().getBlocks().stream()
                 .flatMap(basicBlock -> basicBlock.getNodes().stream())
                 .filter(n -> n instanceof UnaryOperatorNode)
@@ -109,7 +106,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void unaryOperatorForward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/unaryOperator.js");
-        ForwardFlowFunctions ff = new ForwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        ForwardFlowFunctions ff = new ForwardFlowFunctions(null, queryManager);
         UnaryOperatorNode uon = (UnaryOperatorNode) flowGraph.getMain().getBlocks().stream()
                 .flatMap(basicBlock -> basicBlock.getNodes().stream())
                 .filter(n -> n instanceof UnaryOperatorNode)
@@ -145,7 +143,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void binaryOperatorBackward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/binaryOperator.js");
-        BackwardFlowFunctions ff = new BackwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        BackwardFlowFunctions ff = new BackwardFlowFunctions(null, queryManager);
         BinaryOperatorNode bon = (BinaryOperatorNode) flowGraph.getMain().getBlocks().stream()
                 .flatMap(basicBlock -> basicBlock.getNodes().stream())
                 .filter(n -> n instanceof BinaryOperatorNode)
@@ -182,7 +181,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void binaryOperatorForward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/binaryOperator.js");
-        ForwardFlowFunctions ff = new ForwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        ForwardFlowFunctions ff = new ForwardFlowFunctions(null, queryManager);
         BinaryOperatorNode bon = (BinaryOperatorNode) flowGraph.getMain().getBlocks().stream()
                 .flatMap(basicBlock -> basicBlock.getNodes().stream())
                 .filter(n -> n instanceof BinaryOperatorNode)
@@ -224,7 +224,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void constantNodeBackward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/binaryOperator.js");
-        BackwardFlowFunctions ff = new BackwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        BackwardFlowFunctions ff = new BackwardFlowFunctions(null, queryManager);
         ConstantNode cn = (ConstantNode) flowGraph.getMain().getBlocks().stream()
                 .flatMap(basicBlock -> basicBlock.getNodes().stream())
                 .filter(n -> n instanceof ConstantNode && ((ConstantNode) n).getType() == ConstantNode.Type.NUMBER)
@@ -242,7 +243,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void constantNodeForward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/binaryOperator.js");
-        ForwardFlowFunctions ff = new ForwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        ForwardFlowFunctions ff = new ForwardFlowFunctions(null, queryManager);
         ConstantNode cn = (ConstantNode) flowGraph.getMain().getBlocks().stream()
                 .flatMap(basicBlock -> basicBlock.getNodes().stream())
                 .filter(n -> n instanceof ConstantNode && ((ConstantNode) n).getType() == ConstantNode.Type.NUMBER)
@@ -272,7 +274,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void variableReadBackward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/binaryOperator.js");
-        BackwardFlowFunctions ff = new BackwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        BackwardFlowFunctions ff = new BackwardFlowFunctions(null, queryManager);
         ReadVariableNode rvn = (ReadVariableNode) flowGraph.getMain().getBlocks().stream()
                 .flatMap(basicBlock -> basicBlock.getNodes().stream())
                 .filter(n -> n instanceof ReadVariableNode)
@@ -316,7 +319,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void variableReadForward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/binaryOperator.js");
-        ForwardFlowFunctions ff = new ForwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        ForwardFlowFunctions ff = new ForwardFlowFunctions(null, queryManager);
         ReadVariableNode rvn = (ReadVariableNode) flowGraph.getMain().getBlocks().stream()
                 .flatMap(basicBlock -> basicBlock.getNodes().stream())
                 .filter(n -> n instanceof ReadVariableNode)
@@ -352,7 +356,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void variableWriteBackward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/binaryOperator.js");
-        BackwardFlowFunctions ff = new BackwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        BackwardFlowFunctions ff = new BackwardFlowFunctions(null, queryManager);
         WriteVariableNode wvn = (WriteVariableNode) flowGraph.getMain().getBlocks().stream()
                 .flatMap(basicBlock -> basicBlock.getNodes().stream())
                 .filter(n -> n instanceof WriteVariableNode)
@@ -396,7 +401,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void variableWriteForward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/binaryOperator.js");
-        ForwardFlowFunctions ff = new ForwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        ForwardFlowFunctions ff = new ForwardFlowFunctions(null, queryManager);
         WriteVariableNode wvn = (WriteVariableNode) flowGraph.getMain().getBlocks().stream()
                 .flatMap(basicBlock -> basicBlock.getNodes().stream())
                 .filter(n -> n instanceof WriteVariableNode)
@@ -433,7 +439,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void testUnsupportedBackward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/unsupported.js");
-        BackwardFlowFunctions ff = new BackwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        BackwardFlowFunctions ff = new BackwardFlowFunctions(null, queryManager);
         BeginWithNode bwn = (BeginWithNode) flowGraph.getMain().getBlocks().stream()
                 .flatMap(basicBlock -> basicBlock.getNodes().stream())
                 .filter(n -> n instanceof BeginWithNode)
@@ -450,7 +457,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void testUnsupportedForward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/unsupported.js");
-        BackwardFlowFunctions ff = new BackwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        BackwardFlowFunctions ff = new BackwardFlowFunctions(null, queryManager);
         BeginWithNode bwn = (BeginWithNode) flowGraph.getMain().getBlocks().stream()
                 .flatMap(basicBlock -> basicBlock.getNodes().stream())
                 .filter(n -> n instanceof BeginWithNode)
@@ -466,7 +474,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void ifBackward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/ifStmt.js");
-        BackwardFlowFunctions ff = new BackwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        BackwardFlowFunctions ff = new BackwardFlowFunctions(null, queryManager);
         IfNode in = (IfNode) flowGraph.getMain().getBlocks().stream()
                 .flatMap(basicBlock -> basicBlock.getNodes().stream())
                 .filter(n -> n instanceof IfNode)
@@ -497,7 +506,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void ifForward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/ifStmt.js");
-        ForwardFlowFunctions ff = new ForwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        ForwardFlowFunctions ff = new ForwardFlowFunctions(null, queryManager);
         IfNode in = (IfNode) flowGraph.getMain().getBlocks().stream()
                 .flatMap(basicBlock -> basicBlock.getNodes().stream())
                 .filter(n -> n instanceof IfNode)
@@ -530,7 +540,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void declareFunctionNodeBackward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/declareFunction.js");
-        BackwardFlowFunctions ff = new BackwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        BackwardFlowFunctions ff = new BackwardFlowFunctions(null, queryManager);
         DeclareFunctionNode dfn = (DeclareFunctionNode) getNodeByIndex(6, flowGraph);
 
         // Check that flow is killed for the function register
@@ -544,7 +555,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void declareFunctionNodeForward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/declareFunction.js");
-        ForwardFlowFunctions ff = new ForwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        ForwardFlowFunctions ff = new ForwardFlowFunctions(null, queryManager);
         DeclareFunctionNode dfn = (DeclareFunctionNode) getNodeByIndex(6, flowGraph);
 
         // Check that flow is propagated for the function register
@@ -563,7 +575,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void newObjectNodeBackward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/newObject.js");
-        BackwardFlowFunctions ff = new BackwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        BackwardFlowFunctions ff = new BackwardFlowFunctions(null, queryManager);
         NewObjectNode non = (NewObjectNode) getNodeByIndex(6, flowGraph);
 
         // Check that flow is killed for the object register
@@ -577,7 +590,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void newObjectNodeForward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/newObject.js");
-        ForwardFlowFunctions ff = new ForwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        ForwardFlowFunctions ff = new ForwardFlowFunctions(null, queryManager);
         NewObjectNode non = (NewObjectNode) getNodeByIndex(6, flowGraph);
 
         // Check that flow is propagated for the function register
@@ -593,10 +607,11 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     }
 
     @Test
+    @Ignore // call targets no longer returned in set of next states
     public void callNodeForward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/functionCallEnv.js");
-        PointsToGraph pointsTo = new PointsToGraph();
+        PointsToGraph pointsTo = new PointsToGraph(Scheduler.create());
         CallGraph callGraph = new CallGraph();
         CallNode cn = (CallNode) getNodeByIndex(18, flowGraph);
         Value valArg = new Register(11, cn.getBlock().getFunction());
@@ -604,9 +619,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
                 new NodeState(cn),
                 valArg
         );
-        ForwardMerlinSolver solver = new ForwardMerlinSolver(callGraph, pointsTo, initialQuery);
-        MerlinSolverFactory.addNewActiveSolver(solver);
-        QueryGraph.getInstance().setRoot(solver);
+        final var queryManager = new QueryManager();
+        ForwardMerlinSolver solver = queryManager.getOrCreateForwardSolver(initialQuery);
         // Check that flow is propagated from argument to parameter in the called function
         Set<State> nextStates = solver.getFlowFunctions().computeNextStates(cn, valArg);
         Node funcEntryNode = getNodeByIndex(22, flowGraph);
@@ -651,10 +665,11 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     }
 
     @Test
+    @Ignore // call targets no longer returned in set of next states
     public void callNodeBackward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/functionCall.js");
-        PointsToGraph pointsTo = new PointsToGraph();
+        PointsToGraph pointsTo = new PointsToGraph(Scheduler.create());
         CallGraph callGraph = new CallGraph();
         CallNode cn = (CallNode) getNodeByIndex(18, flowGraph);
         Value val = new Register(8, cn.getBlock().getFunction());
@@ -662,9 +677,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
                 new NodeState(cn),
                 val
         );
-        BackwardMerlinSolver solver = new BackwardMerlinSolver(callGraph, pointsTo, initialQuery);
-        MerlinSolverFactory.addNewActiveSolver(solver);
-        QueryGraph.getInstance().setRoot(solver);
+        final var queryManager = new QueryManager();
+        BackwardMerlinSolver solver = queryManager.getOrCreateBackwardSolver(initialQuery);
         // Check that flow is propagated from return value to return statement in the invoked function
         Set<State> nextStates = solver.getFlowFunctions().computeNextStates(cn, val);
 
@@ -683,10 +697,11 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     }
 
     @Test
+    @Ignore // call targets no longer returned in set of next states
     public void returnNodeForward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/functionCall.js");
-        PointsToGraph pointsTo = new PointsToGraph();
+        PointsToGraph pointsTo = new PointsToGraph(Scheduler.create());
         CallGraph callGraph = new CallGraph();
         // Check that flow is propagated from argument to parameter in the called function
         Node callNode = getNodeByIndex(18, flowGraph);
@@ -696,9 +711,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
                 new NodeState(rn),
                 valArg
         );
-        ForwardMerlinSolver solver = new ForwardMerlinSolver(callGraph, pointsTo, initialQuery);
-        MerlinSolverFactory.addNewActiveSolver(solver);
-        QueryGraph.getInstance().setRoot(solver);
+        final var queryManager = new QueryManager();
+        ForwardMerlinSolver solver = queryManager.getOrCreateForwardSolver(initialQuery);
         callGraph.addEdge(((CallNode) callNode), rn.getBlock().getFunction());
 
         Set<State> nextStates = solver.getFlowFunctions().computeNextStates(rn, valArg);
@@ -720,7 +734,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void returnNodeBackward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/functionCall.js");
-        BackwardFlowFunctions ff = new BackwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        BackwardFlowFunctions ff = new BackwardFlowFunctions(null, queryManager);
         ReturnNode rn = (ReturnNode) getNodeByIndex(24, flowGraph);
 
         Value val = new Register(1, rn.getBlock().getFunction());
@@ -742,7 +757,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void propertyReadForward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/propReadWrite.js");
-        ForwardFlowFunctions ff = new ForwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        ForwardFlowFunctions ff = new ForwardFlowFunctions(null, queryManager);
         ReadPropertyNode rpn = ((ReadPropertyNode) getNodeByIndex(12, flowGraph));
         Value base = new Variable("x", rpn.getBlock().getFunction());
         Value propVal = new Register(7, rpn.getBlock().getFunction());
@@ -765,7 +781,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void propertyReadBackward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/propReadWrite.js");
-        BackwardFlowFunctions ff = new BackwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        BackwardFlowFunctions ff = new BackwardFlowFunctions(null, queryManager);
         ReadPropertyNode wpn = ((ReadPropertyNode) getNodeByIndex(12, flowGraph));
         Value base = new Variable("x", wpn.getBlock().getFunction());
         Value propVal = new Register(7, wpn.getBlock().getFunction());
@@ -785,7 +802,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void propertyWriteForward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/propReadWrite.js");
-        ForwardFlowFunctions ff = new ForwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        ForwardFlowFunctions ff = new ForwardFlowFunctions(null, queryManager);
         WritePropertyNode wpn = ((WritePropertyNode) getNodeByIndex(16, flowGraph));
         Value base = new Variable("x", wpn.getBlock().getFunction());
         Value propVal = new ConstantAllocation((ConstantNode) getNodeByIndex(15, flowGraph));
@@ -805,7 +823,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void propertyWriteBackward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/propReadWrite.js");
-        BackwardFlowFunctions ff = new BackwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        BackwardFlowFunctions ff = new BackwardFlowFunctions(null, queryManager);
         WritePropertyNode wpn = ((WritePropertyNode) getNodeByIndex(16, flowGraph));
         Value base = new Variable("x", wpn.getBlock().getFunction());
         Value propVal = new ConstantAllocation((ConstantNode) getNodeByIndex(15, flowGraph));
@@ -828,7 +847,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void beginLoopForward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/loop.js");
-        ForwardFlowFunctions ff = new ForwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        ForwardFlowFunctions ff = new ForwardFlowFunctions(null, queryManager);
         BeginLoopNode beginLoopNode = (BeginLoopNode) flowGraph.getMain().getBlocks().stream()
                 .flatMap(basicBlock -> basicBlock.getNodes().stream())
                 .filter(n -> n instanceof BeginLoopNode)
@@ -861,7 +881,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void beginLoopBackward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/loop.js");
-        BackwardFlowFunctions ff = new BackwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        BackwardFlowFunctions ff = new BackwardFlowFunctions(null, queryManager);
         BeginLoopNode beginLoopNode = (BeginLoopNode) getNodeByIndex(15, flowGraph);
 
         Value val = new Variable("x", flowGraph.getMain());
@@ -888,7 +909,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void endLoopForward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/loop.js");
-        ForwardFlowFunctions ff = new ForwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        ForwardFlowFunctions ff = new ForwardFlowFunctions(null, queryManager);
         EndLoopNode end = (EndLoopNode) getNodeByIndex(29, flowGraph);
         Value val = new Variable("x", flowGraph.getMain());
         Set<State> nextStates = ff.computeNextStates(end, val);
@@ -916,7 +938,8 @@ public class FlowFunctionTests extends AbstractCallGraphTest{
     public void endLoopBackward() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/loop.js");
-        BackwardFlowFunctions ff = new BackwardFlowFunctions(new CallGraph());
+        final var queryManager = new QueryManager();
+        BackwardFlowFunctions ff = new BackwardFlowFunctions(null, queryManager);
         EndLoopNode endLoopNode = (EndLoopNode) getNodeByIndex(29, flowGraph);
 
         Value val = new Variable("x", flowGraph.getMain());

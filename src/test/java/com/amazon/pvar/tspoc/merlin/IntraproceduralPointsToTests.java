@@ -16,18 +16,12 @@
 package com.amazon.pvar.tspoc.merlin;
 
 import com.amazon.pvar.tspoc.merlin.ir.*;
-import com.amazon.pvar.tspoc.merlin.solver.BackwardMerlinSolver;
-import com.amazon.pvar.tspoc.merlin.solver.CallGraph;
-import com.amazon.pvar.tspoc.merlin.solver.ForwardMerlinSolver;
-import com.amazon.pvar.tspoc.merlin.solver.MerlinSolverFactory;
-import com.amazon.pvar.tspoc.merlin.solver.PointsToGraph;
-import com.amazon.pvar.tspoc.merlin.solver.querygraph.QueryGraph;
+import com.amazon.pvar.tspoc.merlin.solver.*;
 import dk.brics.tajs.flowgraph.FlowGraph;
 import dk.brics.tajs.flowgraph.jsnodes.CallNode;
 import dk.brics.tajs.flowgraph.jsnodes.ConstantNode;
 import dk.brics.tajs.flowgraph.jsnodes.DeclareFunctionNode;
 import dk.brics.tajs.flowgraph.jsnodes.NewObjectNode;
-import org.junit.Ignore;
 import org.junit.Test;
 import sync.pds.solver.nodes.Node;
 
@@ -40,8 +34,6 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
     public void forwardQueryObj() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/intraprocedural-tests/intraproceduralObjectPropagation.js");
-        PointsToGraph pointsTo = new PointsToGraph();
-        CallGraph callGraph = new CallGraph();
         NewObjectNode non = (NewObjectNode) getNodeByIndex(9, flowGraph);
         ObjectAllocation allocation = new ObjectAllocation(non);
         Node<NodeState, Value> initialQuery = new Node<>(
@@ -49,9 +41,10 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
                 allocation
         );
 
-        ForwardMerlinSolver solver = new ForwardMerlinSolver(callGraph, pointsTo, initialQuery);
+        final var queryManager = new QueryManager();
+        ForwardMerlinSolver solver = new ForwardMerlinSolver(queryManager, initialQuery);
         solver.solve();
-        Collection<PointsToGraph.PointsToLocation> pts = pointsTo.getKnownValuesPointingTo(allocation);
+        Collection<PointsToGraph.PointsToLocation> pts = solver.getPointsToGraph().getKnownValuesPointingTo(allocation).toJavaSet();
 
         dk.brics.tajs.flowgraph.jsnodes.Node afterV1Write = getNodeByIndex(15, flowGraph);
         dk.brics.tajs.flowgraph.jsnodes.Node afterV2Write = getNodeByIndex(17, flowGraph);
@@ -69,8 +62,6 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
     public void forwardQueryConst() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/intraprocedural-tests/intraproceduralConstPropagation.js");
-        PointsToGraph pointsTo = new PointsToGraph();
-        CallGraph callGraph = new CallGraph();
         ConstantNode constantNode = (ConstantNode) getNodeByIndex(9, flowGraph);
         ConstantAllocation allocation = new ConstantAllocation(constantNode);
         Node<NodeState, Value> initialQuery = new Node<>(
@@ -78,9 +69,10 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
                 allocation
         );
 
-        ForwardMerlinSolver solver = new ForwardMerlinSolver(callGraph, pointsTo, initialQuery);
+        final var queryManager = new QueryManager();
+        ForwardMerlinSolver solver = new ForwardMerlinSolver(queryManager, initialQuery);
         solver.solve();
-        Collection<PointsToGraph.PointsToLocation> pts = pointsTo.getKnownValuesPointingTo(allocation);
+        Collection<PointsToGraph.PointsToLocation> pts = solver.getPointsToGraph().getKnownValuesPointingTo(allocation).toJavaSet();
 
         dk.brics.tajs.flowgraph.jsnodes.Node afterV1Write = getNodeByIndex(15, flowGraph);
         dk.brics.tajs.flowgraph.jsnodes.Node afterV2Write = getNodeByIndex(17, flowGraph);
@@ -98,21 +90,15 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
     public void forwardQueryFuncAssign() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/intraprocedural-tests/intraproceduralFunctionPropagation.js");
-        PointsToGraph pointsTo = new PointsToGraph();
-        CallGraph callGraph = new CallGraph();
         DeclareFunctionNode funcNode = (DeclareFunctionNode) getNodeByIndex(8, flowGraph);
         FunctionAllocation allocation = new FunctionAllocation(funcNode);
         Node<NodeState, Value> initialQuery = new Node<>(
                 new NodeState(funcNode),
                 allocation
         );
-
-        ForwardMerlinSolver solver = new ForwardMerlinSolver(callGraph, pointsTo, initialQuery);
-        MerlinSolverFactory.addNewActiveSolver(solver);
-        QueryGraph.getInstance().setRoot(solver);
-        solver.solve();
-        Collection<PointsToGraph.PointsToLocation> pts = pointsTo.getKnownValuesPointingTo(allocation);
-        Collection<CallNode> invokes = pointsTo.getKnownFunctionInvocations(allocation);
+        final var queryManager = new QueryManager();
+        ForwardMerlinSolver solver = queryManager.getOrStartForwardQuery(initialQuery);
+        Collection<CallNode> invokes = solver.getPointsToGraph().getKnownFunctionInvocations(allocation).toJavaSet();
 
         assert invokes.contains(((CallNode) getNodeByIndex(15, flowGraph)));
         assert !invokes.contains(((CallNode) getNodeByIndex(19, flowGraph)));
@@ -122,8 +108,6 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
     public void forwardQueryFuncDecl() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/intraprocedural-tests/intraproceduralFunctionDecl.js");
-        PointsToGraph pointsTo = new PointsToGraph();
-        CallGraph callGraph = new CallGraph();
         DeclareFunctionNode funcNode = (DeclareFunctionNode) getNodeByIndex(1, flowGraph);
         FunctionAllocation allocation = new FunctionAllocation(funcNode);
         Node<NodeState, Value> initialQuery = new Node<>(
@@ -131,12 +115,9 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
                 allocation
         );
 
-        ForwardMerlinSolver solver = new ForwardMerlinSolver(callGraph, pointsTo, initialQuery);
-        MerlinSolverFactory.addNewActiveSolver(solver);
-        QueryGraph.getInstance().setRoot(solver);
-        solver.solve();
-        Collection<PointsToGraph.PointsToLocation> pts = pointsTo.getKnownValuesPointingTo(allocation);
-        Collection<CallNode> invokes = pointsTo.getKnownFunctionInvocations(allocation);
+        final var queryManager = new QueryManager();
+        ForwardMerlinSolver solver = queryManager.getOrStartForwardQuery(initialQuery);
+        Collection<CallNode> invokes = solver.getPointsToGraph().getKnownFunctionInvocations(allocation).toJavaSet();
 
         assert invokes.contains(((CallNode) getNodeByIndex(11, flowGraph)));
         assert !invokes.contains(((CallNode) getNodeByIndex(15, flowGraph)));
@@ -146,8 +127,6 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
     public void backwardQueryObj() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/intraprocedural-tests/intraproceduralObjectPropagation.js");
-        PointsToGraph pointsTo = new PointsToGraph();
-        CallGraph callGraph = new CallGraph();
         dk.brics.tajs.flowgraph.jsnodes.Node queryNode = getNodeByIndex(15, flowGraph);
         Value queryVal = new Variable("valueToQuery1", flowGraph.getMain());
         Node<NodeState, Value> initialQuery = new Node<>(
@@ -155,9 +134,10 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
                 queryVal
         );
 
-        BackwardMerlinSolver solver = new BackwardMerlinSolver(callGraph, pointsTo, initialQuery);
+        final var queryManager = new QueryManager();
+        BackwardMerlinSolver solver = new BackwardMerlinSolver(queryManager, initialQuery);
         solver.solve();
-        Collection<Allocation> pts = pointsTo.getPointsToSet(queryNode, queryVal);
+        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal).toJavaSet();
 
         System.out.println("Points-To set of " + queryVal + " at " + queryNode + ":");
         System.out.println(pts);
@@ -170,8 +150,6 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
     public void backwardQueryObjWithOverwrite() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/intraprocedural-tests/intraproceduralObjectPropagation.js");
-        PointsToGraph pointsTo = new PointsToGraph();
-        CallGraph callGraph = new CallGraph();
         dk.brics.tajs.flowgraph.jsnodes.Node queryNode = getNodeByIndex(19, flowGraph);
         Value queryVal = new Variable("valueToQuery1", flowGraph.getMain());
         Node<NodeState, Value> initialQuery = new Node<>(
@@ -179,9 +157,10 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
                 queryVal
         );
 
-        BackwardMerlinSolver solver = new BackwardMerlinSolver(callGraph, pointsTo, initialQuery);
+        final var queryManager = new QueryManager();
+        BackwardMerlinSolver solver = new BackwardMerlinSolver(queryManager, initialQuery);
         solver.solve();
-        Collection<Allocation> pts = pointsTo.getPointsToSet(queryNode, queryVal);
+        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal).toJavaSet();
 
         System.out.println("Points-To set of " + queryVal + " at " + queryNode + ":");
         System.out.println(pts);
@@ -194,8 +173,6 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
     public void backwardQueryConst() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/intraprocedural-tests/intraproceduralConstPropagation.js");
-        PointsToGraph pointsTo = new PointsToGraph();
-        CallGraph callGraph = new CallGraph();
         dk.brics.tajs.flowgraph.jsnodes.Node queryNode = getNodeByIndex(19, flowGraph);
         Value queryVal = new Variable("valueToQuery1", flowGraph.getMain());
         Node<NodeState, Value> initialQuery = new Node<>(
@@ -203,9 +180,10 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
                 queryVal
         );
 
-        BackwardMerlinSolver solver = new BackwardMerlinSolver(callGraph, pointsTo, initialQuery);
+        final var queryManager = new QueryManager();
+        BackwardMerlinSolver solver = new BackwardMerlinSolver(queryManager, initialQuery);
         solver.solve();
-        Collection<Allocation> pts = pointsTo.getPointsToSet(queryNode, queryVal);
+        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal).toJavaSet();
 
         System.out.println("Points-To set of " + queryVal + " at " + queryNode + ":");
         System.out.println(pts);
@@ -218,8 +196,6 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
     public void backwardQueryFuncAssign() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/intraprocedural-tests/intraproceduralFunctionPropagation.js");
-        PointsToGraph pointsTo = new PointsToGraph();
-        CallGraph callGraph = new CallGraph();
         dk.brics.tajs.flowgraph.jsnodes.Node queryNode = getNodeByIndex(20, flowGraph);
         Value queryVal = new Variable("valueToQuery", flowGraph.getMain());
         Node<NodeState, Value> initialQuery = new Node<>(
@@ -227,9 +203,10 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
                 queryVal
         );
 
-        BackwardMerlinSolver solver = new BackwardMerlinSolver(callGraph, pointsTo, initialQuery);
+        final var queryManager = new QueryManager();
+        BackwardMerlinSolver solver = new BackwardMerlinSolver(queryManager, initialQuery);
         solver.solve();
-        Collection<Allocation> pts = pointsTo.getPointsToSet(queryNode, queryVal);
+        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal).toJavaSet();
 
         System.out.println("Points-To set of " + queryVal + " at " + queryNode + ":");
         System.out.println(pts);
@@ -242,8 +219,6 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
     public void backwardQueryFuncDecl() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/intraprocedural-tests/intraproceduralFunctionDecl.js");
-        PointsToGraph pointsTo = new PointsToGraph();
-        CallGraph callGraph = new CallGraph();
         dk.brics.tajs.flowgraph.jsnodes.Node queryNode = getNodeByIndex(16, flowGraph);
         Value queryVal = new Variable("valueToQuery", flowGraph.getMain());
         Node<NodeState, Value> initialQuery = new Node<>(
@@ -251,9 +226,10 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
                 queryVal
         );
 
-        BackwardMerlinSolver solver = new BackwardMerlinSolver(callGraph, pointsTo, initialQuery);
+        final var queryManager = new QueryManager();
+        BackwardMerlinSolver solver = new BackwardMerlinSolver(queryManager, initialQuery);
         solver.solve();
-        Collection<Allocation> pts = pointsTo.getPointsToSet(queryNode, queryVal);
+        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal).toJavaSet();
 
         System.out.println("Points-To set of " + queryVal + " at " + queryNode + ":");
         System.out.println(pts);
@@ -266,8 +242,6 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
     public void forwardQueryPropReadWrite() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/intraprocedural-tests/intraproceduralPropReadWrite.js");
-        PointsToGraph pointsTo = new PointsToGraph();
-        CallGraph callGraph = new CallGraph();
         NewObjectNode non = (NewObjectNode) getNodeByIndex(10, flowGraph);
         ObjectAllocation allocation = new ObjectAllocation(non);
         Node<NodeState, Value> initialQuery = new Node<>(
@@ -275,9 +249,10 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
                 allocation
         );
 
-        ForwardMerlinSolver solver = new ForwardMerlinSolver(callGraph, pointsTo, initialQuery);
+        final var queryManager = new QueryManager();
+        ForwardMerlinSolver solver = new ForwardMerlinSolver(queryManager, initialQuery);
         solver.solve();
-        Collection<PointsToGraph.PointsToLocation> pts = pointsTo.getKnownValuesPointingTo(allocation);
+        Collection<PointsToGraph.PointsToLocation> pts = solver.getPointsToGraph().getKnownValuesPointingTo(allocation).toJavaSet();
 
         dk.brics.tajs.flowgraph.jsnodes.Node endNode = getNodeByIndex(18, flowGraph);
         Value queryVal = new Variable("valueToQuery", flowGraph.getMain());
@@ -293,8 +268,6 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/intraprocedural-tests/intraproceduralPropReadWrite.js");
         System.out.println(flowGraph);
-        PointsToGraph pointsTo = new PointsToGraph();
-        CallGraph callGraph = new CallGraph();
         Value queryVal = new Variable("valueToQuery", flowGraph.getMain());
         dk.brics.tajs.flowgraph.jsnodes.Node endNode = getNodeByIndex(18, flowGraph);
         Node<NodeState, Value> initialQuery = new Node<>(
@@ -302,9 +275,10 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
                 queryVal
         );
 
-        BackwardMerlinSolver solver = new BackwardMerlinSolver(callGraph, pointsTo, initialQuery);
+        final var queryManager = new QueryManager();
+        BackwardMerlinSolver solver = new BackwardMerlinSolver(queryManager, initialQuery);
         solver.solve();
-        Collection<Allocation> pts = pointsTo.getPointsToSet(endNode, queryVal);
+        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(endNode, queryVal).toJavaSet();
 
         NewObjectNode non = (NewObjectNode) getNodeByIndex(10, flowGraph);
         ObjectAllocation allocation = new ObjectAllocation(non);
@@ -322,8 +296,6 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
     public void backwardLoop() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/flow-function-unit-tests/loop.js");
-        PointsToGraph pointsTo = new PointsToGraph();
-        CallGraph callGraph = new CallGraph();
         Value queryVal = new Variable("x", flowGraph.getMain());
         dk.brics.tajs.flowgraph.jsnodes.Node endNode = getNodeByIndex(30, flowGraph);
         Node<NodeState, Value> initialQuery = new Node<>(
@@ -331,9 +303,10 @@ public class IntraproceduralPointsToTests extends AbstractCallGraphTest {
                 queryVal
         );
 
-        BackwardMerlinSolver solver = new BackwardMerlinSolver(callGraph, pointsTo, initialQuery);
+        final var queryManager = new QueryManager();
+        BackwardMerlinSolver solver = new BackwardMerlinSolver(queryManager, initialQuery);
         solver.solve();
-        Collection<Allocation> pts = pointsTo.getPointsToSet(endNode, queryVal);
+        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(endNode, queryVal).toJavaSet();
 
         NewObjectNode non = (NewObjectNode) getNodeByIndex(8, flowGraph);
         ObjectAllocation allocation = new ObjectAllocation(non);

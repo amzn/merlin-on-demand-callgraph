@@ -15,35 +15,29 @@
 
 package com.amazon.pvar.tspoc.merlin.solver.flowfunctions;
 
-import com.amazon.pvar.tspoc.merlin.ir.*;
-import com.amazon.pvar.tspoc.merlin.solver.BackwardMerlinSolver;
-import com.amazon.pvar.tspoc.merlin.solver.CallGraph;
+import com.amazon.pvar.tspoc.merlin.DebugUtils;
+import com.amazon.pvar.tspoc.merlin.ir.Property;
+import com.amazon.pvar.tspoc.merlin.ir.Register;
+import com.amazon.pvar.tspoc.merlin.ir.Value;
+import com.amazon.pvar.tspoc.merlin.ir.Variable;
+import com.amazon.pvar.tspoc.merlin.livecollections.LiveCollection;
 import com.amazon.pvar.tspoc.merlin.solver.MerlinSolver;
-import com.amazon.pvar.tspoc.merlin.solver.MerlinSolverFactory;
-import com.amazon.pvar.tspoc.merlin.solver.PointsToGraph;
-import com.amazon.pvar.tspoc.merlin.solver.querygraph.QueryGraph;
-import dk.brics.tajs.flowgraph.AbstractNode;
+import com.amazon.pvar.tspoc.merlin.solver.QueryManager;
 import dk.brics.tajs.flowgraph.Function;
 import dk.brics.tajs.flowgraph.jsnodes.*;
-import dk.brics.tajs.js2flowgraph.FlowGraphBuilder;
-import sync.pds.solver.SyncPDSSolver;
-import sync.pds.solver.SyncPDSUpdateListener;
-import sync.pds.solver.nodes.CallPopNode;
-import sync.pds.solver.nodes.NodeWithLocation;
-import sync.pds.solver.nodes.PopNode;
+import wpds.interfaces.State;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 public class BackwardFlowFunctions extends AbstractFlowFunctions {
 
-    /**
-     * Store node predecessor maps for each function as needed to avoid duplicating computation
-     */
-    private final Map<Function, Map<AbstractNode, Set<AbstractNode>>> predecessorMapCache = new HashMap<>();
+    public BackwardFlowFunctions(MerlinSolver containingSolver, QueryManager queryManager) {
+        super(containingSolver, queryManager);
+    }
 
-    public BackwardFlowFunctions(CallGraph callGraph) {
-        super(callGraph);
+    @Override
+    public Collection<Node> nextNodes(Node n) {
+        return getPredecessors(n);
     }
 
     /**
@@ -88,14 +82,23 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
         }
 
         // propagate the assigned value to the return value of possibly invoked functions, if necessary
+
         if (getQueryValue().equals(usedRegisters.get(n.getResultRegister()))) {
-            Collection<Function> targetFunctions = resolveFunctionCall(n);
-            targetFunctions.forEach(targetFunction -> {
-                Node returnNode = ((Node) targetFunction.getOrdinaryExit().getLastNode());
-                Register returnReg = new Register(1, targetFunction);
-                addCallPushState(returnNode, returnReg, n);
-                usedRegisters.clear();
-            });
+            final var targetFunctions = resolveFunctionCall(n);
+            final var currentSPDSNode = currentPDSNode;
+            if (containingSolver != null) {
+                final var queryID = containingSolver.getQueryID(currentSPDSNode, false, false);
+                continueWithSubqueryResult(targetFunctions, queryID, (targetFunction) -> {
+                    DebugUtils.debug("Discovered new callee for " + n + ": " + targetFunction);
+                    final var returnNode = ((Node) targetFunction.getOrdinaryExit().getLastNode());
+                    final var returnReg = new Register(1, targetFunction);
+                    final var nextState = callPushState(returnNode, returnReg, n);
+                    DebugUtils.debug("Propagating to callee: " + nextState + " for node: " + currentSPDSNode);
+                    containingSolver.propagate(currentSPDSNode, nextState);
+                    DebugUtils.debug("Done propagating to callee");
+                });
+            }
+            usedRegisters.clear();
         }
     }
 
@@ -449,9 +452,8 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
 
 
     @Override
-    protected void treatAsNop(Node n) {
-        getPredecessors(n)
-                .forEach(this::addStandardNormalFlow);
+    protected synchronized void treatAsNop(Node n) {
+        getPredecessors(n).forEach(this::addStandardNormalFlow);
     }
 
     /**
@@ -460,17 +462,18 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
      * @param killed
      */
     @Override
-    protected void killAt(Node n, Set<Value> killed) {
+    protected synchronized void killAt(Node n, Set<Value> killed) {
         getPredecessors(n)
                 .forEach(predecessor -> addStandardNormalFlow(predecessor, killed));
     }
 
-    protected void genSingleNormalFlow(Node n, Value v) {
+    protected synchronized void genSingleNormalFlow(Node n, Value v) {
         getPredecessors(n)
                 .forEach(predecessor -> addSingleState(predecessor, v));
     }
 
-    private void handleflowToFunctionEntry(ConstantNode entryNode, Variable queryVar) {
+    private synchronized void handleflowToFunctionEntry(ConstantNode entryNode, Variable queryVar) {
+        DebugUtils.debug("Handling flow to entry of " + entryNode.getBlock().getFunction() + " looking backwards for " + queryVar);
         Function containingFunction = entryNode.getBlock().getFunction();
         if (containingFunction.isMain()) {
             return;
@@ -480,111 +483,70 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
                 .filter(name -> name.equals(queryVar.getVarName()))
                 .findFirst();
         // Launch a forward query on the containing function to find possible invocations
-        Collection<CallNode> invokes = findInvocationsOfFunction(containingFunction);
-
+        LiveCollection<CallNode> liveInvokes = findInvocationsOfFunction(containingFunction);
+        final var currentSPDSNode = currentPDSNode;
         if (paramName.isPresent()) {
             // continue the backward query from the argument passed to the invocation
             int paramIndex = containingFunction.getParameterNames().indexOf(paramName.get());
-            invokes.forEach(invoke -> {
-                try {
-                    Register reg = new Register(invoke.getArgRegister(paramIndex), invoke.getBlock().getFunction());
-                    addSingleState(invoke, reg);
-                } catch (ArrayIndexOutOfBoundsException e) {}
-            });
+            if (containingSolver != null) {
+                final var queryID = containingSolver.getQueryID(currentSPDSNode, true, false);
+                continueWithSubqueryResult(liveInvokes, queryID, invoke -> {
+                    DebugUtils.debug("handleflowToFunctionEntry[param]: found invocation of " + containingFunction +
+                            ": " + invoke + " for query: " + queryVar);
+                    try {
+                        Register reg = new Register(invoke.getArgRegister(paramIndex), invoke.getBlock().getFunction());
+                        State nextState = makeSPDSNode(invoke, reg);
+                        DebugUtils.debug("Propagating pop state: " + nextState + " where initialQuery=" +
+                                containingSolver.initialQuery + " and currentSPDSNode: " + currentSPDSNode);
+                        containingSolver.propagate(currentSPDSNode, nextState);
+                        DebugUtils.debug("Done propagating: " + nextState);
+                    } catch (ArrayIndexOutOfBoundsException ignored) {
+                    }
+                });
+            }
         } else {
-            invokes.forEach(invoke -> {
-                Function invokeScope = invoke.getBlock().getFunction();
-                // Closure handling
-                if (!queryVar.isVisibleIn(invokeScope)) {
-                    // If QueryVar isn't visible at the call site, we should move out one scope from the current
-                    // function and find what queryVar could point to in the invocation scope.
-                    Node outerScopeReturnNode =
-                            ((Node) containingFunction.getNode().getBlock().getFunction().getOrdinaryExit().getFirstNode());
-                    addSingleState(outerScopeReturnNode, queryVar);
-                } else {
-                    addCallPopState(invoke, queryVar);
-                }
-            });
+            if (containingSolver != null) {
+                final var queryID = containingSolver.getQueryID(currentSPDSNode, true, false);
+                continueWithSubqueryResult(liveInvokes, queryID, invoke -> {
+                    DebugUtils.debug("handleflowToFunctionEntry[non-param]: found invocation of " +
+                            containingFunction + ": " + invoke + " for query: " + queryVar);
+                    Function invokeScope = invoke.getBlock().getFunction();
+                    if (!queryVar.isVisibleIn(invokeScope)) {
+                        Node outerScopeReturnNode =
+                                ((Node) containingFunction.getNode().getBlock().getFunction().getOrdinaryExit().getFirstNode());
+                        final var state = makeSPDSNode(outerScopeReturnNode, queryVar);
+                        containingSolver.propagate(currentSPDSNode, state);
+                    } else {
+                        final var popState = callPopState(invoke, queryVar);
+                        containingSolver.propagate(currentSPDSNode, popState);
+                    }
+                });
+            }
         }
     }
 
-    /**
-     * Find all functions that could be call targets of the provided CallNode
-     *
-     * @param n
-     * @return
-     */
-    private Collection<Function> resolveFunctionCall(CallNode n) {
-        if (FlowFunctionUtil.allCalleesFound.contains(n)) {
-            return callGraph.getCallTargets(n);
-        }
-        PointsToGraph ptg = MerlinSolverFactory
-                .peekCurrentActiveSolver()
-                .getPointsToGraph();
-        if (ptg.isLocationComplete(n, usedRegisters.get(n.getFunctionRegister()))) {
-            return ptg.getPointsToSet(n, usedRegisters.get(n.getFunctionRegister()))
-                    .stream()
-                    .filter(alloc -> alloc instanceof FunctionAllocation)
-                    .map(alloc -> ((DeclareFunctionNode) alloc.getAllocationStatement()).getFunction())
-                    .collect(Collectors.toSet());
-        }
-        Collection<Function> callees = getPredecessors(n)
-                .stream()
-                .flatMap(predecessor -> {
-                    sync.pds.solver.nodes.Node<NodeState, Value> initialQuery = new sync.pds.solver.nodes.Node<>(
-                            new NodeState(predecessor),
-                            usedRegisters.get(n.getFunctionRegister())
-                    );
-                    BackwardMerlinSolver solver = MerlinSolverFactory.getNewBackwardSolver(initialQuery);
-                    QueryGraph.getInstance().addEdge(MerlinSolverFactory.peekCurrentActiveSolver(), solver);
-                    MerlinSolverFactory.addNewActiveSolver(solver);
-                    solver.setFunctionQuery(true);
-                    solver.solve();
-                    MerlinSolverFactory.removeCurrentActiveSolver();
-                    solver.getPointsToGraph().markLocationComplete(initialQuery.stmt().getNode(), initialQuery.fact());
-                    return solver
-                            .getPointsToGraph()
-                            .getPointsToSet(predecessor, usedRegisters.get(n.getFunctionRegister()))
-                            .stream()
-                            .filter(alloc -> alloc instanceof FunctionAllocation)
-                            .map(alloc -> ((DeclareFunctionNode) alloc.getAllocationStatement()).getFunction());
-                })
-                .collect(Collectors.toSet());
-        FlowFunctionUtil.allCalleesFound.add(n);
-        return callees;
-    }
-
-    private Collection<Node> getPredecessors(Node n) {
-        return predecessorMapCache
-                .computeIfAbsent(n.getBlock().getFunction(), FlowGraphBuilder::makeNodePredecessorMap)
-                .get(n)
-                .stream()
-                .filter(abstractNode -> abstractNode instanceof Node)
-                .map(abstractNode -> ((Node) abstractNode))
-                .collect(Collectors.toSet());
-    }
-
-    private void addCallPushState(Node entryNode, Value entryValue, Node callSite) {
-        addSingleCallPushState(
-                entryNode,
-                entryValue,
-                callSite
-        );
-    }
-
-    private void addCallPopState(Node callSite, Value argValue) {
-        addSingleCallPopState(callSite, argValue);
-    }
-
-    private void addPropPushState(Node n, Value base, Property property) {
+    private synchronized void addPropPushState(Node n, Value base, Property property) {
         getPredecessors(n).forEach(pred -> {
             addSinglePropPushState(pred, base, property);
         });
     }
 
-    private void addPropPopState(Node n, Value val, Property property) {
+    private synchronized void addPropPopState(Node n, Value val, Property property) {
         getPredecessors(n).forEach(pred -> {
             addSinglePropPopState(pred, val, property);
         });
+    }
+
+    private BackwardFlowFunctions(MerlinSolver containingSolver, QueryManager queryManager, FlowFunctionState savedState) {
+        super(containingSolver, queryManager);
+        this.usedRegisters = new HashMap<>(savedState.usedRegisters());
+        this.declaredVariables = new HashSet<>(savedState.declaredVariables());
+        this.queryValue = savedState.queryValue();
+        this.currentPDSNode = savedState.pdsNode();
+    }
+
+    @Override
+    protected BackwardFlowFunctions copyFromFlowFunctionState(FlowFunctionState state) {
+        return new BackwardFlowFunctions(containingSolver, queryManager, state);
     }
 }

@@ -50,6 +50,7 @@ libraryDependencies += "commons-cli" % "commons-cli" % "1.4"
 // https://mvnrepository.com/artifact/org.slf4j/slf4j-api/1.7.30
 // Required dependency for synchronizedPDS and WPDS
 libraryDependencies += "org.slf4j" % "slf4j-api" % "1.7.30"
+libraryDependencies += "org.slf4j" % "slf4j-simple" % "2.0.3" % Test
 
 Compile / run / mainClass := Some(
   "com.amazon.pvar.tspoc.merlin.experiments.Main"

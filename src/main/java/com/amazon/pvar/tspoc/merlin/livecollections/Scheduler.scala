@@ -19,7 +19,13 @@ final class Scheduler(
     pool.execute(() => func)
   }
 
-  def addRunnable(func: Runnable): Unit = {
-    pool.execute(func)
-  }
+}
+
+object Scheduler {
+  // Java-friendly constructors (since Java does not support default parameters)
+  def create(): Scheduler = new Scheduler(
+    new ForkJoinPool(Runtime.getRuntime.availableProcessors)
+  )
+
+  def create(pool: ForkJoinPool) = new Scheduler(pool)
 }

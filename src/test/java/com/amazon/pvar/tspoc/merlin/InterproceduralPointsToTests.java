@@ -17,19 +17,16 @@ package com.amazon.pvar.tspoc.merlin;
 
 import com.amazon.pvar.tspoc.merlin.ir.*;
 import com.amazon.pvar.tspoc.merlin.solver.*;
-import com.amazon.pvar.tspoc.merlin.solver.querygraph.QueryGraph;
 import dk.brics.tajs.flowgraph.FlowGraph;
-import dk.brics.tajs.flowgraph.jsnodes.CallNode;
-import dk.brics.tajs.flowgraph.jsnodes.ConstantNode;
-import dk.brics.tajs.flowgraph.jsnodes.DeclareFunctionNode;
-import dk.brics.tajs.flowgraph.jsnodes.NewObjectNode;
+import dk.brics.tajs.flowgraph.jsnodes.*;
+import org.apache.log4j.Level;
 import org.junit.Ignore;
 import org.junit.Test;
 import sync.pds.solver.nodes.Node;
 
 import java.util.Collection;
 
-public class InterproceduralPointsToTests extends AbstractCallGraphTest{
+public class InterproceduralPointsToTests extends AbstractCallGraphTest {
 
     public void printPointsTo(
             Value queryVal,
@@ -47,11 +44,6 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
         System.out.println(callGraph);
     }
 
-    public void initializeQueryGraph(MerlinSolver solver) {
-        MerlinSolverFactory.addNewActiveSolver(solver);
-        QueryGraph.getInstance().setRoot(solver);
-    }
-
     @Test
     public void findSingleCallSite() {
         FlowGraph flowGraph =
@@ -63,10 +55,10 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
                 queryVal
         );
 
-        BackwardMerlinSolver solver = MerlinSolverFactory.getNewBackwardSolver(initialQuery);
-        initializeQueryGraph(solver);
-        solver.solve();
-        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal);
+        final var queryManager = new QueryManager();
+        BackwardMerlinSolver solver = queryManager.getOrStartBackwardQuery(initialQuery);
+        final var liveSet = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal);
+        Collection<Allocation> pts = liveSet.toJavaSet();
 
         printPointsTo(queryVal, queryNode, pts);
         assert pts.contains(new ObjectAllocation(((NewObjectNode) getNodeByIndex(7, flowGraph))));
@@ -91,10 +83,9 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
                 queryVal
         );
 
-        BackwardMerlinSolver solver = MerlinSolverFactory.getNewBackwardSolver(initialQuery);
-        initializeQueryGraph(solver);
-        solver.solve();
-        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal);
+        final var queryManager = new QueryManager();
+        BackwardMerlinSolver solver = queryManager.getOrStartBackwardQuery(initialQuery);
+        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal).toJavaSet();
 
         printPointsTo(queryVal, queryNode, pts);
         assert pts.contains(new ObjectAllocation(((NewObjectNode) getNodeByIndex(7, flowGraph))));
@@ -124,10 +115,9 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
                 queryVal
         );
 
-        BackwardMerlinSolver solver = MerlinSolverFactory.getNewBackwardSolver(initialQuery);
-        initializeQueryGraph(solver);
-        solver.solve();
-        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal);
+        final var queryManager = new QueryManager();
+        BackwardMerlinSolver solver = queryManager.getOrStartBackwardQuery(initialQuery);
+        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal).toJavaSet();
 
         printPointsTo(queryVal, queryNode, pts);
         assert pts.contains(new ObjectAllocation(((NewObjectNode) getNodeByIndex(8, flowGraph))));
@@ -157,11 +147,9 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
                 queryVal
         );
 
-        BackwardMerlinSolver solver = MerlinSolverFactory.getNewBackwardSolver(initialQuery);
-        initializeQueryGraph(solver);
-        solver.solve();
-        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal);
-
+        final var queryManager = new QueryManager();
+        BackwardMerlinSolver solver = queryManager.getOrStartBackwardQuery(initialQuery);
+        final var pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal).toJavaSet();
         printPointsTo(queryVal, queryNode, pts);
         assert pts.contains(new ObjectAllocation(((NewObjectNode) getNodeByIndex(13, flowGraph))));
 
@@ -177,11 +165,40 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
                 new CallGraph.Edge(callsite2, barDeclNode.getFunction())
         );
         assert solver.getCallGraph().size() == 2;
-
     }
 
     @Test
-    @Ignore // Will fail until datalog-style solver is implemented (leads to query graph cycle)
+    public void findSingleHigherOrderCallSiteSimplified() {
+        FlowGraph flowGraph =
+                initializeFlowgraph("src/test/resources/js/callgraph/interprocedural-tests/higherOrder3.js");
+        dk.brics.tajs.flowgraph.jsnodes.Node queryNode = getNodeByIndex(15, flowGraph);
+        Value queryVal = new Variable("valueToQuery", queryNode.getBlock().getFunction());
+        Node<NodeState, Value> initialQuery = new Node<>(
+                new NodeState(queryNode),
+                queryVal
+        );
+
+        final var queryManager = new QueryManager();
+        BackwardMerlinSolver solver = queryManager.getOrStartBackwardQuery(initialQuery);
+        final var pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal).toJavaSet();
+        printPointsTo(queryVal, queryNode, pts);
+
+        System.out.println();
+        printCallGraph(solver.getCallGraph());
+        assert pts.contains(new ObjectAllocation(((NewObjectNode) getNodeByIndex(9, flowGraph))));
+        CallNode callsite1 = ((CallNode) getNodeByIndex(14, flowGraph));
+        CallNode callsite2 = ((CallNode) getNodeByIndex(21, flowGraph));
+        DeclareFunctionNode barDeclNode = (DeclareFunctionNode) getNodeByIndex(2, flowGraph);
+        assert solver.getCallGraph().contains(
+                new CallGraph.Edge(callsite1, callsite2.getBlock().getFunction())
+        );
+        assert solver.getCallGraph().contains(
+                new CallGraph.Edge(callsite2, barDeclNode.getFunction())
+        );
+        assert solver.getCallGraph().size() == 2;
+    }
+
+    @Test
     public void findMultipleHigherOrderCallSites() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/interprocedural-tests/higherOrder2.js");
@@ -192,14 +209,13 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
                 queryVal
         );
 
-        BackwardMerlinSolver solver = MerlinSolverFactory.getNewBackwardSolver(initialQuery);
-        initializeQueryGraph(solver);
-        solver.solve();
-        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal);
-
+        final var queryManager = new QueryManager();
+        BackwardMerlinSolver solver = queryManager.getOrStartBackwardQuery(initialQuery);
+        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal).toJavaSet();
+        queryManager.scheduler().waitUntilDone();
         printPointsTo(queryVal, queryNode, pts);
-        assert pts.contains(new ObjectAllocation(((NewObjectNode) getNodeByIndex(16, flowGraph))));
-        assert pts.contains(new ConstantAllocation(((ConstantNode) getNodeByIndex(43, flowGraph))));
+        assert pts.contains(new ObjectAllocation(((NewObjectNode) getNodeByIndex(16, flowGraph)))) &&
+                        pts.contains(new ConstantAllocation(((ConstantNode) getNodeByIndex(43, flowGraph))));
 
         System.out.println();
         printCallGraph(solver.getCallGraph());
@@ -223,6 +239,7 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
         assert solver.getCallGraph().size() == 4;
     }
 
+    // Ad-hoc closure logic missing
     @Test
     public void simpleClosure() {
         FlowGraph flowGraph =
@@ -234,10 +251,9 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
                 queryVal
         );
 
-        BackwardMerlinSolver solver = MerlinSolverFactory.getNewBackwardSolver(initialQuery);
-        initializeQueryGraph(solver);
-        solver.solve();
-        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal);
+        final var queryManager = new QueryManager();
+        BackwardMerlinSolver solver = queryManager.getOrStartBackwardQuery(initialQuery);
+        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal).toJavaSet();
 
         printPointsTo(queryVal, queryNode, pts);
         assert pts.contains(new ObjectAllocation(((NewObjectNode) getNodeByIndex(8, flowGraph))));
@@ -263,10 +279,10 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
                 queryVal
         );
 
-        BackwardMerlinSolver solver = MerlinSolverFactory.getNewBackwardSolver(initialQuery);
-        initializeQueryGraph(solver);
-        solver.solve();
-        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal);
+
+        final var queryManager = new QueryManager();
+        BackwardMerlinSolver solver = queryManager.getOrStartBackwardQuery(initialQuery);
+        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal).toJavaSet();
 
         printPointsTo(queryVal, queryNode, pts);
         System.out.println();
@@ -304,10 +320,9 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
                 queryVal
         );
 
-        BackwardMerlinSolver solver = MerlinSolverFactory.getNewBackwardSolver(initialQuery);
-        initializeQueryGraph(solver);
-        solver.solve();
-        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal);
+        final var queryManager = new QueryManager();
+        BackwardMerlinSolver solver = queryManager.getOrStartBackwardQuery(initialQuery);
+        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal).toJavaSet();
 
         printPointsTo(queryVal, queryNode, pts);
         System.out.println();
@@ -343,10 +358,9 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
                 queryVal
         );
 
-        BackwardMerlinSolver solver = MerlinSolverFactory.getNewBackwardSolver(initialQuery);
-        initializeQueryGraph(solver);
-        solver.solve();
-        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal);
+        final var queryManager = new QueryManager();
+        BackwardMerlinSolver solver = queryManager.getOrStartBackwardQuery(initialQuery);
+        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal).toJavaSet();
 
         printPointsTo(queryVal, queryNode, pts);
         System.out.println();
@@ -383,10 +397,9 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
                 queryVal
         );
 
-        BackwardMerlinSolver solver = MerlinSolverFactory.getNewBackwardSolver(initialQuery);
-        initializeQueryGraph(solver);
-        solver.solve();
-        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal);
+        final var queryManager = new QueryManager();
+        BackwardMerlinSolver solver = queryManager.getOrStartBackwardQuery(initialQuery);
+        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal).toJavaSet();
 
         printPointsTo(queryVal, queryNode, pts);
         System.out.println();
@@ -407,6 +420,7 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
         );
     }
 
+    // ad-hoc closure handling missing
     @Test
     public void multipleContextClosure() {
         FlowGraph flowGraph =
@@ -418,10 +432,9 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
                 queryVal
         );
 
-        BackwardMerlinSolver solver = MerlinSolverFactory.getNewBackwardSolver(initialQuery);
-        initializeQueryGraph(solver);
-        solver.solve();
-        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal);
+        final var queryManager = new QueryManager();
+        BackwardMerlinSolver solver = queryManager.getOrStartBackwardQuery(initialQuery);
+        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal).toJavaSet();
 
         printPointsTo(queryVal, queryNode, pts);
         System.out.println();
@@ -430,7 +443,6 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
         assert pts.contains(new ObjectAllocation(((NewObjectNode) getNodeByIndex(10, flowGraph))));
         assert pts.contains(new ObjectAllocation(((NewObjectNode) getNodeByIndex(16, flowGraph))));
         assert pts.size() == 2;
-
     }
 
     @Test
@@ -450,20 +462,17 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
                 new NodeState(queryNode),
                 queryVal2
         );
+        final var queryManager = new QueryManager();
 
-        BackwardMerlinSolver solver1 = MerlinSolverFactory.getNewBackwardSolver(initialQuery1);
-        initializeQueryGraph(solver1);
-        solver1.solve();
-        Collection<Allocation> pts1 = solver1.getPointsToGraph().getPointsToSet(queryNode, queryVal1);
+        BackwardMerlinSolver solver1 = queryManager.getOrStartBackwardQuery(initialQuery1);
+        Collection<Allocation> pts1 = solver1.getPointsToGraph().getPointsToSet(queryNode, queryVal1).toJavaSet();
 
         printPointsTo(queryVal1, queryNode, pts1);
         System.out.println();
         printCallGraph(solver1.getCallGraph());
 
-        BackwardMerlinSolver solver2 = MerlinSolverFactory.getNewBackwardSolver(initialQuery2);
-        MerlinSolverFactory.addNewActiveSolver(solver2);
-        solver2.solve();
-        Collection<Allocation> pts2 = solver2.getPointsToGraph().getPointsToSet(queryNode, queryVal2);
+        BackwardMerlinSolver solver2 = queryManager.getOrStartBackwardQuery(initialQuery2);
+        Collection<Allocation> pts2 = solver2.getPointsToGraph().getPointsToSet(queryNode, queryVal2).toJavaSet();
 
         System.out.println();
         printPointsTo(queryVal2, queryNode, pts2);
@@ -485,16 +494,18 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
                 new NodeState(queryNode),
                 queryVal
         );
-
-        ForwardMerlinSolver solver = MerlinSolverFactory.getNewForwardSolver(initialQuery);
-        initializeQueryGraph(solver);
-        solver.solve();
+        final var queryManager = new QueryManager();
+        ForwardMerlinSolver solver = queryManager.getOrStartForwardQuery(initialQuery);
         Collection<PointsToGraph.PointsToLocation> ptls = solver
                 .getPointsToGraph()
                 .getKnownValuesPointingTo(
                         new ObjectAllocation(((NewObjectNode) queryNode))
-                );
-
+                )
+                .toJavaSet();
+        System.out.println("Points-to set:");
+        for (final var ptl: ptls) {
+            System.out.println("- " + ptl);
+        }
         dk.brics.tajs.flowgraph.jsnodes.Node endFlowNode = getNodeByIndex(18, flowGraph);
         Value endFlowVal = new Variable("valueToQuery", queryNode.getBlock().getFunction());
 
@@ -512,18 +523,53 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
                 queryVal
         );
 
-        BackwardMerlinSolver solver = MerlinSolverFactory.getNewBackwardSolver(initialQuery);
-        initializeQueryGraph(solver);
-        solver.solve();
-        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal);
-
+        final var queryManager = new QueryManager();
+        BackwardMerlinSolver solver = queryManager.getOrStartBackwardQuery(initialQuery);
+        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal).toJavaSet();
         printPointsTo(queryVal, queryNode, pts);
         assert pts.contains(new ObjectAllocation(((NewObjectNode) getNodeByIndex(9, flowGraph))));
         assert !pts.contains(new ObjectAllocation(((NewObjectNode) getNodeByIndex(11, flowGraph))));
     }
 
     @Test
-    @Ignore
+    public void simpleReturn() {
+
+        FlowGraph flowGraph =
+                initializeFlowgraph("src/test/resources/js/callgraph/interprocedural-tests/simpleCallToReturn.js");
+        final var queryNode = (dk.brics.tajs.flowgraph.jsnodes.Node)
+                FlowgraphUtils.allNodesInFunction(flowGraph.getMain())
+                        .filter(node -> node instanceof WriteVariableNode write && write.getVariableName().equals("valueToQuery"))
+                        .findFirst()
+                        .orElseThrow();
+        final Value queryVal = new Variable("valueToQuery", queryNode.getBlock().getFunction());
+        final var initialQuery = new Node<>(
+                new NodeState(queryNode),
+                queryVal
+        );
+
+        final var allocNode = (NewObjectNode) FlowgraphUtils.allNodesInFunction(flowGraph.getMain())
+                .filter(node -> node instanceof NewObjectNode)
+                .findFirst()
+                .orElseThrow();
+        final var queryManager = new QueryManager();
+        final var solver = queryManager.getOrStartBackwardQuery(initialQuery);
+        final var pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal).toJavaSet();
+        printPointsTo(queryVal, queryNode, pts);
+        assert pts.size() == 1;
+        assert pts.contains(new ObjectAllocation(allocNode));
+    }
+
+    @Test
+    @Ignore // Can be useful to debug race conditions
+    public void repeatTestCase() {
+        org.apache.log4j.Logger.getRootLogger().setLevel(org.apache.log4j.Level.DEBUG);
+        for (int i = 0; i < 100; i++) {
+            findMultipleHigherOrderCallSites();
+            System.out.println("============================ SUCCESS ======================================");
+        }
+    }
+
+    @Test
     public void interproceduralPropReadWrite() {
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/interprocedural-tests/interproceduralPropReadWrite.js");
@@ -534,10 +580,9 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
                 queryVal
         );
 
-        BackwardMerlinSolver solver = MerlinSolverFactory.getNewBackwardSolver(initialQuery);
-        initializeQueryGraph(solver);
-        solver.solve();
-        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal);
+        final var queryManager = new QueryManager();
+        BackwardMerlinSolver solver = queryManager.getOrStartBackwardQuery(initialQuery);
+        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal).toJavaSet();
 
         printPointsTo(queryVal, queryNode, pts);
         assert pts.contains(new ObjectAllocation(((NewObjectNode) getNodeByIndex(13, flowGraph))));
@@ -555,15 +600,44 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
                 queryVal
         );
 
-        BackwardMerlinSolver solver = MerlinSolverFactory.getNewBackwardSolver(initialQuery);
-        initializeQueryGraph(solver);
-        solver.solve();
-        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal);
+        final var queryManager = new QueryManager();
+        BackwardMerlinSolver solver = queryManager.getOrStartBackwardQuery(initialQuery);
+        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal).toJavaSet();
 
         printPointsTo(queryVal, queryNode, pts);
         assert pts.contains(new ObjectAllocation(((NewObjectNode) getNodeByIndex(23, flowGraph))));
         assert pts.contains(new ObjectAllocation(((NewObjectNode) getNodeByIndex(8, flowGraph))));
         assert pts.size() == 2;
+    }
+
+    @Test
+    public void closureDepth3Simple() {
+        FlowGraph flowGraph =
+                initializeFlowgraph("src/test/resources/js/callgraph/interprocedural-tests/closureDepth3-simple.js");
+        final var queryNode = (dk.brics.tajs.flowgraph.jsnodes.Node)
+                FlowgraphUtils.allNodesInFunction(FlowgraphUtils.getFunctionByName(flowGraph, "inner").orElseThrow())
+                        .filter(node -> node instanceof ReadVariableNode read && read.getVariableName().equals("b"))
+                        .findFirst()
+                        .orElseThrow();
+        Value queryVal = new Variable("b", queryNode.getBlock().getFunction());
+        Node<NodeState, Value> initialQuery = new Node<>(
+                new NodeState( queryNode),
+                queryVal
+        );
+        final var queryManager = new QueryManager();
+        BackwardMerlinSolver solver = queryManager.getOrCreateBackwardSolver(initialQuery);
+        solver.solve();
+        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal).toJavaSet();
+
+        printPointsTo(queryVal, queryNode, pts);
+        printCallGraph(solver.getCallGraph());
+
+        final NewObjectNode allocNode = (NewObjectNode) FlowgraphUtils.allNodesInFunction(flowGraph.getMain())
+                .filter(node -> node instanceof NewObjectNode)
+                .findFirst()
+                .orElseThrow();
+        assert pts.contains(new ObjectAllocation(allocNode));
+        assert pts.size() == 1;
     }
 
     @Test
@@ -577,15 +651,122 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest{
                 queryVal
         );
 
-        BackwardMerlinSolver solver = MerlinSolverFactory.getNewBackwardSolver(initialQuery);
-        initializeQueryGraph(solver);
-        solver.solve();
-        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal);
+        final var queryManager = new QueryManager();
+        BackwardMerlinSolver solver = queryManager.getOrStartBackwardQuery(initialQuery);
+        Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal).toJavaSet();
 
         printPointsTo(queryVal, queryNode, pts);
+        printCallGraph(solver.getCallGraph());
+
         assert pts.contains(new ObjectAllocation(((NewObjectNode) getNodeByIndex(11, flowGraph))));
         assert pts.contains(new ObjectAllocation(((NewObjectNode) getNodeByIndex(13, flowGraph))));
         assert pts.contains(new ObjectAllocation(((NewObjectNode) getNodeByIndex(36, flowGraph))));
         assert pts.size() == 3;
     }
+
+    @Test
+    public void recursiveQueriesTerminate() {
+        FlowGraph flowGraph = initializeFlowgraph("src/test/resources/js/callgraph/interprocedural-tests/recursiveQueries.js");
+        final var funcDecl = (DeclareFunctionNode)FlowgraphUtils.allNodesInFunction(flowGraph.getMain()).filter(node -> {
+            if (node instanceof DeclareFunctionNode decl) {
+                final var func = decl.getFunction();
+                return func.getName() != null && func.getName().equals("f");
+            } else {
+                return false;
+            }
+        }).findFirst().orElseThrow();
+        final var funcAlloc = new FunctionAllocation(funcDecl);
+        Node<NodeState, Value> initialQuery = new Node<>(
+                new NodeState(funcDecl),
+                funcAlloc
+        );
+
+        final var queryManager = new QueryManager();
+        ForwardMerlinSolver solver = queryManager.getOrStartForwardQuery(initialQuery);
+        Collection<PointsToGraph.PointsToLocation> ptls = solver
+                .getPointsToGraph()
+                .getKnownValuesPointingTo(funcAlloc)
+                .toJavaSet();
+        System.out.println("Points-to set:");
+        for (final var ptl: ptls) {
+            System.out.println("- " + ptl);
+        }
+        final var gFunc = FlowgraphUtils.getFunctionByName(flowGraph, "g").orElseThrow();
+        final var callInG = (CallNode)FlowgraphUtils.allNodesInFunction(gFunc)
+                .filter(node -> node instanceof CallNode call && call.getTajsFunctionName() == null)
+                .findFirst()
+                .orElseThrow();
+        final var fFunc = funcDecl.getFunction();
+        final var callInF = (CallNode)FlowgraphUtils.allNodesInFunction(fFunc)
+                .filter(node -> node instanceof CallNode call && call.getTajsFunctionName() == null)
+                .findFirst()
+                .orElseThrow();
+
+        assert ptls.contains(new PointsToGraph.PointsToLocation(
+                callInF,
+                new Register(callInF.getFunctionRegister(), fFunc)
+        ));
+        assert ptls.contains(new PointsToGraph.PointsToLocation(
+                callInG,
+                new Register(callInG.getFunctionRegister(), gFunc)
+        ));
+    }
+
+    @Test
+    public void resolveArgInsideCallee() {
+        FlowGraph flowGraph = initializeFlowgraph("src/test/resources/js/callgraph/interprocedural-tests/resolveArg.js");
+        final var queryNode = (dk.brics.tajs.flowgraph.jsnodes.Node)
+                FlowgraphUtils.getFunctionByName(flowGraph, "bar")
+                        .orElseThrow()
+                        .getOrdinaryExit()
+                        .getLastNode();
+
+        final var queryValue = new Variable("valueToQuery", queryNode.getBlock().getFunction());
+        Node<NodeState, Value> initialQuery = new Node<>(
+                new NodeState( queryNode),
+                queryValue
+        );
+
+        final var queryManager = new QueryManager();
+        final var solver = queryManager.getOrStartBackwardQuery(initialQuery);
+        final var pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryValue).toJavaSet();
+        printPointsTo(queryValue, queryNode, pts);
+        printCallGraph(solver.getCallGraph());
+        final var allocNode = (NewObjectNode) FlowgraphUtils.allNodesInFunction(flowGraph.getMain())
+                .filter(node -> node instanceof NewObjectNode)
+                .findFirst()
+                .orElseThrow();
+        final var allocSite = new ObjectAllocation(allocNode);
+        assert pts.size() == 1;
+        assert pts.contains(allocSite);
+    }
+
+    @Test
+    public void resolveArgFromOutside() {
+        FlowGraph flowGraph = initializeFlowgraph("src/test/resources/js/callgraph/interprocedural-tests/resolveArg.js");
+        final var queryNode = (dk.brics.tajs.flowgraph.jsnodes.Node)
+                FlowgraphUtils.allNodesInFunction(flowGraph.getMain())
+                        .filter(node -> node instanceof WriteVariableNode write && write.getVariableName().equals("result"))
+                        .findFirst()
+                        .orElseThrow();
+        final var queryValue = new Variable("result", queryNode.getBlock().getFunction());
+        Node<NodeState, Value> initialQuery = new Node<>(
+                new NodeState( queryNode),
+                queryValue
+        );
+
+        final var queryManager = new QueryManager();
+        final var solver = queryManager.getOrStartBackwardQuery(initialQuery);
+        final var pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryValue).toJavaSet();
+        printPointsTo(queryValue, queryNode, pts);
+        printCallGraph(solver.getCallGraph());
+        final var allocNode = (NewObjectNode) FlowgraphUtils.allNodesInFunction(flowGraph.getMain())
+                .filter(node -> node instanceof NewObjectNode)
+                .findFirst()
+                .orElseThrow();
+        final var allocSite = new ObjectAllocation(allocNode);
+        assert pts.size() == 1;
+        assert pts.contains(allocSite);
+    }
+
 }

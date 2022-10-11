@@ -11,6 +11,8 @@ sealed trait LiveCollection[A] {
   /** Register a handler for elements in this collection. When a handler is
     * added, it is run on all existing elements on the collection, and invoked
     * whenever a new element is added.
+    *
+    * Does not block but may run handler on existing elements in new tasks.
     */
   def onAdd(handler: Handler[A]): Unit
 
@@ -56,6 +58,7 @@ class LiveSet[A](sched: Scheduler) extends LiveCollection[A] {
     }
   }
 
+  /** Adds an element to the LiveSet and runs any handlers registered on it. */
   def add(elem: A): Unit = synchronized {
     if (!elems.contains(elem)) {
       elems += elem

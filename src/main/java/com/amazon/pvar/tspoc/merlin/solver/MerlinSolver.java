@@ -15,6 +15,7 @@
 
 package com.amazon.pvar.tspoc.merlin.solver;
 
+import com.amazon.pvar.tspoc.merlin.DebugUtils;
 import com.amazon.pvar.tspoc.merlin.ir.NodeState;
 import com.amazon.pvar.tspoc.merlin.ir.Property;
 import com.amazon.pvar.tspoc.merlin.ir.Value;
@@ -35,9 +36,8 @@ import java.util.Set;
 
 public abstract class MerlinSolver extends SyncPDSSolver<NodeState, Value, Property, Weight.NoWeight> {
 
-    protected final CallGraph callGraph;
-    protected final PointsToGraph pointsToGraph;
-    protected final Node<NodeState, Value> initialQuery;
+    public final Node<NodeState, Value> initialQuery;
+    protected final QueryManager queryManager;
 
     /**
      * The SyncPDSSolver class requires WeightFunctions in the case that the analysis includes a weight domain.
@@ -57,7 +57,7 @@ public abstract class MerlinSolver extends SyncPDSSolver<NodeState, Value, Prope
      * We also set maxCallDepth, maxFieldDepth, and maxUnbalancedCallDepth to -1, which corresponds to unlimited depth.
      * If developing a tool for production use, these may be useful parameters to examine for the sake of performance.
      */
-    public MerlinSolver(CallGraph callGraph, PointsToGraph pointsToGraph, Node<NodeState, Value> initialQuery) {
+    public MerlinSolver(QueryManager queryManager, Node<NodeState, Value> initialQuery) {
         super(
                 false,
                 new SummaryNestedWeightedPAutomatons<>(),
@@ -67,37 +67,34 @@ public abstract class MerlinSolver extends SyncPDSSolver<NodeState, Value, Prope
                 -1,
                 -1
         );
-        this.callGraph = callGraph;
-        this.pointsToGraph = pointsToGraph;
+        this.queryManager = queryManager;
         this.initialQuery = initialQuery;
     }
 
     public PointsToGraph getPointsToGraph() {
-        return pointsToGraph;
+        return queryManager.getPointsToGraph();
     }
 
     public CallGraph getCallGraph() {
-        return callGraph;
+        return queryManager.getCallGraph();
     }
 
     public abstract AbstractFlowFunctions getFlowFunctions();
 
-    protected abstract void updatePointsTo(Node<NodeState, Value> node, Set<State> nextStates);
+    public abstract void withFlowFunctions(AbstractFlowFunctions flowFuncs, Runnable runnable);
 
-    protected void updateCallGraph(Node<NodeState, Value> node, Set<State> nextStates) {
+    protected void updateCallGraph(Node<NodeState, Value> node, State nextState) {
         dk.brics.tajs.flowgraph.jsnodes.Node tajsNode = node.stmt().getNode();
         if (tajsNode instanceof CallNode callNode) {
-            nextStates.forEach(state -> {
-                if (state instanceof PushNode pushNode) {
-                    if (pushNode.stmt() instanceof NodeState nodeState) {
-                        Function nextFunction = nodeState.getNode().getBlock().getFunction();
-                        if (!nextFunction.equals(tajsNode.getBlock().getFunction())) {
-                            // Add a new CG edge if the current state and the next state are in different functions
-                            callGraph.addEdge(callNode, nextFunction);
-                        }
+            if (nextState instanceof PushNode pushNode) {
+                if (pushNode.stmt() instanceof NodeState nodeState) {
+                    Function nextFunction = nodeState.getNode().getBlock().getFunction();
+                    if (!nextFunction.equals(tajsNode.getBlock().getFunction())) {
+                        // Add a new CG edge if the current state and the next state are in different functions
+                        queryManager.getCallGraph().addEdge(callNode, nextFunction);
                     }
                 }
-            });
+            }
         }
     }
 
@@ -117,16 +114,23 @@ public abstract class MerlinSolver extends SyncPDSSolver<NodeState, Value, Prope
     }
 
     @Override
-    public void computeSuccessor(Node<NodeState, Value> node) {
+    public synchronized  void computeSuccessor(Node<NodeState, Value> node) {
         if (Objects.isNull(node.stmt().getNode())) {
             System.err.println("Warning: no predecessor statement found. " +
                     "The analysis may have reached the beginning of the program without finding an allocation site");
             return;
         }
-        Set<State> nextStates = getFlowFunctions()
-                .computeNextStates(node.stmt().getNode(), node.fact());
-        updateCallGraph(node, nextStates);
-        updatePointsTo(node, nextStates);
+        for (final var nextNode: getFlowFunctions().nextNodes(node.stmt().getNode())) {
+            if (nextNode instanceof CallNode callNode) {
+                this.registerListener(updatedNode -> {
+                    if (updatedNode.stmt().getNode().equals(callNode)) {
+                        DebugUtils.debug("Listener called about update for " + callNode);
+                        computeSuccessor(updatedNode);
+                    }
+                });
+            }
+        }
+        Set<State> nextStates = getFlowFunctions().computeNextStates(node.stmt().getNode(), node.fact());
         nextStates.forEach(nextState -> propagate(node, nextState));
     }
 
@@ -177,5 +181,17 @@ public abstract class MerlinSolver extends SyncPDSSolver<NodeState, Value, Prope
     @Override
     public int hashCode() {
         return Objects.hash(initialQuery);
+    }
+
+    public abstract String getQueryString();
+
+    public abstract QueryID getQueryID(Node<NodeState, Value> subQuery, boolean isSubQueryForward, boolean inUnbalancedPopListener);
+
+    public abstract void solve();
+
+    @Override
+    public synchronized void propagate(Node<NodeState, Value> curr, State s) {
+        updateCallGraph(curr, s);
+        super.propagate(curr, s);
     }
 }

@@ -3,11 +3,9 @@ package com.amazon.pvar.tspoc.merlin.livecollections
 import org.scalatest.concurrent.TimeLimitedTests
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers._
-import org.scalatest.matchers.should._
 import org.scalatest.time.{Millis, Span}
 
 import java.util.concurrent.atomic.AtomicInteger
-import scala.math
 
 class LiveSetSpec extends AnyFlatSpec with TimeLimitedTests {
 
@@ -128,4 +126,5 @@ class LiveSetSpec extends AnyFlatSpec with TimeLimitedTests {
     val derivedSet = underlyingSet1 union underlyingSet2
     assertListenerOnDerivedSetIsRun(underlyingSet2, derivedSet, 1)
   }
+
 }

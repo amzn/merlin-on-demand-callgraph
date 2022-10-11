@@ -15,21 +15,18 @@
 
 package com.amazon.pvar.tspoc.merlin.solver;
 
+import com.amazon.pvar.tspoc.merlin.DebugUtils;
 import com.amazon.pvar.tspoc.merlin.ir.Allocation;
 import com.amazon.pvar.tspoc.merlin.ir.FunctionAllocation;
 import com.amazon.pvar.tspoc.merlin.ir.Register;
 import com.amazon.pvar.tspoc.merlin.ir.Value;
-import com.google.common.collect.HashBasedTable;
-import com.google.common.collect.HashMultimap;
-import com.google.common.collect.Multimap;
-import com.google.common.collect.Table;
+import com.amazon.pvar.tspoc.merlin.livecollections.LiveCollection;
+import com.amazon.pvar.tspoc.merlin.livecollections.LiveSet;
+import com.amazon.pvar.tspoc.merlin.livecollections.Scheduler;
 import dk.brics.tajs.flowgraph.jsnodes.CallNode;
 import dk.brics.tajs.flowgraph.jsnodes.Node;
 
-import java.util.Collection;
 import java.util.Objects;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * This class stores points-to information collected during the course of an analysis.
@@ -37,6 +34,16 @@ import java.util.stream.Collectors;
  * Information is stored in two multimaps for easy bidirectional lookup.
  */
 public class PointsToGraph {
+    private final Scheduler scheduler;
+    private final LiveMap<PointsToLocation, Allocation> pointsToLiveMap;
+
+    private final LiveMap<Allocation, PointsToLocation> allocationLiveMap;
+
+    public PointsToGraph(Scheduler scheduler) {
+        this.scheduler = scheduler;
+        pointsToLiveMap = LiveMap.create(scheduler);
+        allocationLiveMap = LiveMap.create(scheduler);
+    }
 
     /**
      * A Node/Value pair that tracks whether information at that point is complete
@@ -45,7 +52,6 @@ public class PointsToGraph {
 
         private final Node location;
         private final Value value;
-        private boolean hasCompleteInformation = false;
 
 
         public PointsToLocation(Node location, Value value) {
@@ -61,20 +67,13 @@ public class PointsToGraph {
             return value;
         }
 
-        public boolean hasCompleteInformation() {
-            return hasCompleteInformation;
-        }
-
-        public void setHasCompleteInformation(boolean hasCompleteInformation) {
-            this.hasCompleteInformation = hasCompleteInformation;
-        }
-
         @Override
         public boolean equals(Object o) {
             if (this == o) return true;
             if (o == null || getClass() != o.getClass()) return false;
             PointsToLocation that = (PointsToLocation) o;
             return Objects.equals(location, that.location) && Objects.equals(value, that.value);
+
         }
 
         /**
@@ -89,21 +88,19 @@ public class PointsToGraph {
 
         @Override
         public String toString() {
-            return value + "@" + location;
+            return value + "@" + location.getIndex() + ":" + location;
         }
     }
 
-    private final Multimap<PointsToLocation, Allocation> pointsToBackingMap = HashMultimap.create();
-    private final Multimap<Allocation, PointsToLocation> allocationBackingMap = HashMultimap.create();
-    private final Table<Node, Value, PointsToLocation> ptlTable = HashBasedTable.create();
 
     /**
      * Get the known points-to set for the provided location
      * @param location
      * @return
      */
-    public Collection<Allocation> getPointsToSet(PointsToLocation location) {
-        return pointsToBackingMap.get(location);
+
+    public LiveSet<Allocation> getPointsToSet(PointsToLocation location) {
+        return pointsToLiveMap.get(location);
     }
 
     /**
@@ -112,8 +109,9 @@ public class PointsToGraph {
      * @param value
      * @return
      */
-    public Collection<Allocation> getPointsToSet(Node location, Value value) {
-        return getPointsToSet(ptlTable.get(location, value));
+
+    public LiveSet<Allocation> getPointsToSet(Node location, Value value) {
+        return getPointsToSet(new PointsToLocation(location, value));
     }
 
     /**
@@ -121,8 +119,8 @@ public class PointsToGraph {
      * @param alloc
      * @return
      */
-    public Collection<PointsToLocation> getKnownValuesPointingTo(Allocation alloc) {
-        return allocationBackingMap.get(alloc);
+    public LiveSet<PointsToLocation> getKnownValuesPointingTo(Allocation alloc) {
+        return allocationLiveMap.get(alloc);
     }
 
     /**
@@ -130,22 +128,24 @@ public class PointsToGraph {
      * @param functionAlloc
      * @return
      */
-    public Set<CallNode> getKnownFunctionInvocations(FunctionAllocation functionAlloc) {
-        return allocationBackingMap
-                .get(functionAlloc)
-                .stream()
+    public LiveCollection<CallNode> getKnownFunctionInvocations(FunctionAllocation functionAlloc) {
+        final var allocLiveMap = allocationLiveMap.get(functionAlloc);
+        DebugUtils.debug("listening for function invocations of " + functionAlloc.getAllocationStatement()  +
+        " on " + allocLiveMap);
+        return allocLiveMap
                 .filter(ptl -> {
                     if (ptl.getLocation() instanceof CallNode callNode &&
-                        ptl.getValue() instanceof Register register) {
+                            ptl.getValue() instanceof Register register) {
                         return callNode.getFunctionRegister() != -1 &&
                                 callNode.getFunctionRegister() == register.getId() &&
                                 callNode.getBlock().getFunction().equals(register.getContainingFunction());
                     }
                     return false;
                 })
-                .map(ptl -> (CallNode) ptl.getLocation())
-                .collect(Collectors.toSet());
+                .map(ptl -> (CallNode)ptl.getLocation());
+
     }
+
 
     /**
      * Add a points-to fact to the graph
@@ -153,8 +153,9 @@ public class PointsToGraph {
      * @param allocation
      */
     public void addPointsToFact(PointsToLocation pointsToLocation, Allocation allocation) {
-        pointsToBackingMap.put(pointsToLocation, allocation);
-        allocationBackingMap.put(allocation, pointsToLocation);
+        pointsToLiveMap.put(pointsToLocation, allocation);
+        allocationLiveMap.put(allocation, pointsToLocation);
+        DebugUtils.debug("[" + this + "]: Discovered points-to: " + pointsToLocation + " -> " + allocation);
     }
 
     /**
@@ -165,21 +166,6 @@ public class PointsToGraph {
      */
     public void addPointsToFact(Node location, Value value, Allocation allocation) {
         PointsToLocation ptl = new PointsToLocation(location, value);
-        ptlTable.put(location, value, ptl);
         addPointsToFact(ptl, allocation);
-    }
-
-    public void markLocationComplete(Node location, Value value) {
-        if (!ptlTable.contains(location, value)) {
-            ptlTable.put(location, value, new PointsToLocation(location, value));
-        }
-        Objects.requireNonNull(ptlTable.get(location, value)).setHasCompleteInformation(true);
-    }
-
-    public boolean isLocationComplete(Node location, Value value) {
-        if (!ptlTable.contains(location, value)) {
-            return false;
-        }
-        return Objects.requireNonNull(ptlTable.get(location, value)).hasCompleteInformation();
     }
 }

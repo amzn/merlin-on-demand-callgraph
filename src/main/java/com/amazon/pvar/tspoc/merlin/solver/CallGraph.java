@@ -24,10 +24,14 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Merlin's internal call graph representation.
+ * Merlin's call graph representation.
  *
  * The implementation includes an iterable edge set, as well as a callsite -> function multimap and a
  * function -> callsite multimap to support fast bidirectional lookup.
+ *
+ * Note: This class is purely for reporting the resulting call graph at the end of the analysis.
+ * To obtain callers or call sites during analysis, use getLiveKnownFunctionInvocations in PointsToGraph
+ * or `resolveFunctionCallLive` in flow functions
  */
 public class CallGraph implements Iterable<CallGraph.Edge> {
 
@@ -74,13 +78,15 @@ public class CallGraph implements Iterable<CallGraph.Edge> {
         @Override
         public String toString() {
             return callSite.getSourceLocation().getLineNumber() + " --> "
-                    + callTarget.getNode().getSourceLocation().getLineNumber();
+                    + callTarget.getNode().getSourceLocation().getLineNumber()
+                    + "(" + callSite + " -> " + callTarget + ")";
         }
     }
 
     private final Set<Edge> edgeSet = new HashSet<>();
     private final Multimap<CallNode, Function> calleeBackingMultimap = HashMultimap.create();
     private final Multimap<Function, CallNode> callerBackingMultimap = HashMultimap.create();
+
 
     /**
      * Adds a new edge to the call graph, updating all internal data structures if the edge is not already present
@@ -89,7 +95,7 @@ public class CallGraph implements Iterable<CallGraph.Edge> {
      * @return true if the edge was added successfully, false if the edge was already present in the call graph or
      * adding the edge failed for any other reason.
      */
-    public boolean addEdge(Edge newEdge) {
+    public synchronized boolean addEdge(Edge newEdge) {
         boolean added = edgeSet.add(newEdge);
         if (added) {
             calleeBackingMultimap.put(newEdge.getCallSite(), newEdge.getCallTarget());
@@ -98,25 +104,9 @@ public class CallGraph implements Iterable<CallGraph.Edge> {
         return added;
     }
 
-    public boolean addEdge(CallNode callsite, Function target) {
+    public synchronized boolean addEdge(CallNode callsite, Function target) {
         Edge edge = new Edge(callsite, target);
         return addEdge(edge);
-    }
-
-    /**
-     * @param callSite
-     * @return a collection of the functions that can be invoked from the provided CallNode
-     */
-    public Collection<Function> getCallTargets(CallNode callSite) {
-        return calleeBackingMultimap.get(callSite);
-    }
-
-    /**
-     * @param function
-     * @return a collection of the callsites that can invoke the provided function
-     */
-    public Collection<CallNode> getCallers(Function function) {
-        return callerBackingMultimap.get(function);
     }
 
     /**

@@ -15,23 +15,18 @@
 
 package com.amazon.pvar.tspoc.merlin.solver.flowfunctions;
 
+import com.amazon.pvar.tspoc.merlin.DebugUtils;
 import com.amazon.pvar.tspoc.merlin.ir.*;
-import com.amazon.pvar.tspoc.merlin.solver.CallGraph;
-import com.amazon.pvar.tspoc.merlin.solver.ForwardMerlinSolver;
-import com.amazon.pvar.tspoc.merlin.solver.MerlinSolverFactory;
-import com.amazon.pvar.tspoc.merlin.solver.querygraph.QueryGraph;
-import dk.brics.tajs.flowgraph.FlowGraph;
+import com.amazon.pvar.tspoc.merlin.livecollections.LiveCollection;
+import com.amazon.pvar.tspoc.merlin.livecollections.LiveSet;
+import com.amazon.pvar.tspoc.merlin.livecollections.TaggedHandler;
+import com.amazon.pvar.tspoc.merlin.solver.MerlinSolver;
+import com.amazon.pvar.tspoc.merlin.solver.QueryID;
+import com.amazon.pvar.tspoc.merlin.solver.QueryManager;
+import dk.brics.tajs.flowgraph.AbstractNode;
 import dk.brics.tajs.flowgraph.Function;
-import dk.brics.tajs.flowgraph.jsnodes.CallNode;
-import dk.brics.tajs.flowgraph.jsnodes.ConstantNode;
-import dk.brics.tajs.flowgraph.jsnodes.DeclareFunctionNode;
-import dk.brics.tajs.flowgraph.jsnodes.NewObjectNode;
-import dk.brics.tajs.flowgraph.jsnodes.Node;
-import dk.brics.tajs.flowgraph.jsnodes.NodeVisitor;
-import dk.brics.tajs.flowgraph.jsnodes.ReadPropertyNode;
-import dk.brics.tajs.flowgraph.jsnodes.ReadVariableNode;
-import dk.brics.tajs.flowgraph.jsnodes.WritePropertyNode;
-import dk.brics.tajs.flowgraph.jsnodes.WriteVariableNode;
+import dk.brics.tajs.flowgraph.jsnodes.*;
+import dk.brics.tajs.js2flowgraph.FlowGraphBuilder;
 import sync.pds.solver.SyncPDSSolver;
 import sync.pds.solver.nodes.CallPopNode;
 import sync.pds.solver.nodes.NodeWithLocation;
@@ -39,33 +34,62 @@ import sync.pds.solver.nodes.PopNode;
 import sync.pds.solver.nodes.PushNode;
 import wpds.interfaces.State;
 
+import javax.annotation.Nullable;
 import java.util.*;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 /**
  * This abstract class collects behaviour that is common to both forward and backward flow functions within Merlin's
  * framework.
- *
+ * <p>
  * This class's sole public method can be invoked to apply a flow function at a particular node and obtain the next
  * SPDS states after the flow function is applied.
  */
 public abstract class AbstractFlowFunctions implements NodeVisitor {
 
-    protected final Map<Node, NodeState> wrappedNodeMap = new HashMap<>();
-    protected final Set<Variable> declaredVariables = new HashSet<>();
-    protected final Map<Integer, Register> usedRegisters = new HashMap<>();
     /**
-     * The call graph is solely used for looking up possible successors to function return statements
+     * Store node predecessor maps for each function as needed to avoid duplicating computation
      */
-    protected final CallGraph callGraph;
-    private Set<State> nextStates;
-    private Value queryValue;
+    private final Map<Function, Map<AbstractNode, Set<AbstractNode>>> predecessorMapCache = Collections.synchronizedMap(new HashMap<>());
+    protected Set<Variable> declaredVariables = new HashSet<>();
+    protected Map<Integer, Register> usedRegisters = new HashMap<>();
 
-    public AbstractFlowFunctions(CallGraph callGraph) {
-        this.callGraph = callGraph;
+    protected sync.pds.solver.nodes.Node<NodeState, Value> currentPDSNode;
+
+    protected final QueryManager queryManager;
+    protected Set<State> nextStates;
+    protected Value queryValue;
+
+    // TODO: This is only ever null in flow function unit tests. This could be avoided by using
+    // a mock object in the flow function tests.
+    @Nullable
+    protected final MerlinSolver containingSolver;
+
+
+    public AbstractFlowFunctions(MerlinSolver containingSolver, QueryManager queryManager) {
+        this.containingSolver = containingSolver;
+        this.queryManager = queryManager;
     }
 
     /**
+     * Given a set of allocations, return the corresponding functions for function allocations.
+     */
+    public static LiveCollection<Function> allocationsToFunctions(LiveCollection<Allocation> allocations) {
+        return allocations.filter(alloc -> alloc instanceof FunctionAllocation)
+                .map(alloc -> ((DeclareFunctionNode) alloc.getAllocationStatement()).getFunction());
+    }
+
+    private synchronized void addNextState(State nextState) {
+        nextStates.add(nextState);
+    }
+
+    public abstract Collection<Node> nextNodes(Node n);
+
+    /**
      * Create an SPDS-compatible Node<> from a NodeState and a value
+     *
      * @param nodeState
      * @param value
      * @return
@@ -76,6 +100,7 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
 
     /**
      * Create an SPDS-compatible Node<> from a TAJS flowgraph node and a value
+     *
      * @param jsNode
      * @param value
      * @return
@@ -90,6 +115,7 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
 
     /**
      * Given a function and index, returns the node located at that index
+     *
      * @param index
      * @param function
      * @return
@@ -104,99 +130,90 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
                 .orElseThrow();
     }
 
-    /**
-     * Creates a new NodeState from a given node if it is not already present in the wrappedNodeMap
-     * @param n
-     * @return
-     */
-    protected NodeState makeNodeState(Node n) {
-        NodeState nodeState;
-        if (wrappedNodeMap.containsKey(n)) {
-            nodeState = wrappedNodeMap.get(n);
-        } else {
-            nodeState = new NodeState(n);
-            wrappedNodeMap.put(n, nodeState);
-        }
-        return nodeState;
+    protected static NodeState makeNodeState(Node n) {
+        return new NodeState(n);
     }
 
     /**
      * Apply flow function at the provided node and obtain the next states. Next states are stored in the nextStates
      * member of this class.
-     *
+     * <p>
      * Classes that extend this abstract class should implement "visit" methods that update (but do not re-assign)
      * the nextStates attribute.
      *
      * @param node
      * @return
      */
-    public Set<State> computeNextStates(Node node, Value val) {
+    public synchronized Set<State> computeNextStates(Node node, Value val) {
         queryValue = val;
         nextStates = new HashSet<>();
         if (val instanceof Register register) {
-            usedRegisters.putIfAbsent(register.getId(), register);
+            usedRegisters.put(register.getId(), register);
         } else if (val instanceof Variable variable) {
             declaredVariables.add(variable);
         }
+        final var directionLabel = (this instanceof BackwardFlowFunctions) ? "bwd" : "fwd";
+        final var lineNum = (node.getSourceLocation() != null)
+                ? "L" + node.getSourceLocation().getLineNumber()
+                : "L?";
+        DebugUtils.debug(directionLabel + "+" + val + ": traversing node: " + node + "[" + node.getIndex() +
+                "@" + node.getBlock().getFunction() + "]   " + lineNum);
+        final var pdsNode = new sync.pds.solver.nodes.Node<>(new NodeState(node), val);
+        currentPDSNode = pdsNode;
         node.visitBy(this);
         return nextStates;
     }
 
-    protected void addStandardNormalFlow(Node next, Set<Value> killedValues) {
+    protected synchronized void addStandardNormalFlow(Node next, Set<Value> killedValues) {
         declaredVariables.forEach(var -> {
             if (!killedValues.contains(var) && var.equals(queryValue)) {
-                nextStates.add(makeSPDSNode(next, var));
+                addNextState(makeSPDSNode(next, var));
             }
         });
-
         usedRegisters.values().forEach(register -> {
             if (!killedValues.contains(register) && register.equals(queryValue)) {
-                nextStates.add(makeSPDSNode(next, register));
+                addNextState(makeSPDSNode(next, register));
             }
         });
     }
 
-    protected void addStandardNormalFlow(Node next) {
+    protected synchronized void addStandardNormalFlow(Node next) {
         declaredVariables.forEach(var -> {
             if (var.equals(queryValue)) {
-                nextStates.add(makeSPDSNode(next, var));
+                addNextState(makeSPDSNode(next, var));
             }
         });
 
         usedRegisters.values().forEach(register -> {
             if (register.equals(queryValue)) {
-                nextStates.add(makeSPDSNode(next, register));
+                addNextState(makeSPDSNode(next, register));
             }
         });
     }
 
-    protected void addSingleState(Node n, Value v) {
-        nextStates.add(makeSPDSNode(n, v));
+    protected synchronized void addSingleState(Node n, Value v) {
+        addNextState(makeSPDSNode(n, v));
     }
 
-    protected void addSingleCallPushState(Node n, Value v, Node location) {
-        nextStates.add(
-                new PushNode<>(
-                        makeNodeState(n),
-                        v,
-                        makeNodeState(location),
-                        SyncPDSSolver.PDSSystem.CALLS
-                )
+    protected static State callPushState(Node n, Value v, Node location) {
+        return new PushNode<>(
+                makeNodeState(n),
+                v,
+                makeNodeState(location),
+                SyncPDSSolver.PDSSystem.CALLS
         );
     }
 
-    protected void addSingleCallPopState(Node n, Value v) {
-        nextStates.add(
-                new CallPopNode<>(
-                        v,
-                        SyncPDSSolver.PDSSystem.CALLS,
-                        makeNodeState(n)
-                )
+    protected static State callPopState(Node n, Value v) {
+        return new CallPopNode<>(
+                v,
+                SyncPDSSolver.PDSSystem.CALLS,
+                makeNodeState(n)
         );
     }
 
-    protected void addSinglePropPushState(Node n, Value v, Property location) {
-        nextStates.add(
+    protected synchronized void addSinglePropPushState(Node n, Value v, Property location) {
+        addNextState(
                 new PushNode<>(
                         makeNodeState(n),
                         v,
@@ -207,7 +224,7 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
     }
 
     protected void addSinglePropPopState(Node n, Value v, Property p) {
-        nextStates.add(
+        addNextState(
                 new PopNode<>(
                         new NodeWithLocation<>(
                                 makeNodeState(n),
@@ -236,7 +253,7 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
      * @param usageScope
      * @return
      */
-    protected Function getDeclaringScope(String varName, Function usageScope) {
+    protected synchronized Function getDeclaringScope(String varName, Function usageScope) {
         Function currentScope = usageScope;
         if (varName.equals("process")) {
             // Accessing arguments, process is always declared by the runtime in the outermost (main) scope
@@ -248,8 +265,8 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
         while (Objects.nonNull(currentScope)) {
             if (
                     currentScope.getVariableNames().contains(varName) ||
-                    currentScope.getParameterNames().contains(varName) ||
-                    scopeDeclaresFunctionWithName(currentScope, varName)
+                            currentScope.getParameterNames().contains(varName) ||
+                            scopeDeclaresFunctionWithName(currentScope, varName)
             ) {
                 return currentScope;
             }
@@ -290,38 +307,26 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
 
     /**
      * Find call sites where the provided function may be called by issuing a new forward query on the function
-     *
-     * @param function
-     * @return
      */
-    protected Collection<CallNode> findInvocationsOfFunction(Function function) {
-        // If invocation information for this function is already cached, consult the call graph instead of issuing
-        // a new query
-        if (FlowFunctionUtil.allInvocationsFound.contains(function)) {
-            return callGraph.getCallers(function);
-        }
+    public synchronized LiveCollection<CallNode> findInvocationsOfFunction(Function function) {
         DeclareFunctionNode functionDeclaration = function.getNode();
         FunctionAllocation alloc = new FunctionAllocation(functionDeclaration);
         sync.pds.solver.nodes.Node<NodeState, Value> initialQuery = new sync.pds.solver.nodes.Node<>(
                 new NodeState(functionDeclaration),
                 alloc
         );
-        ForwardMerlinSolver solver = MerlinSolverFactory.getNewForwardSolver(initialQuery);
-        QueryGraph.getInstance().addEdge(MerlinSolverFactory.peekCurrentActiveSolver(), solver);
-        MerlinSolverFactory.addNewActiveSolver(solver);
-        solver.solve();
-        MerlinSolverFactory.removeCurrentActiveSolver();
-        FlowFunctionUtil.allInvocationsFound.add(function);
+        final var solver = queryManager.getOrStartForwardQuery(initialQuery);
         return solver.getPointsToGraph().getKnownFunctionInvocations(alloc);
     }
 
     /**
      * Retrieves the variable associated with the base register for a ReadPropertyNode. The variable is always loaded
      * into the base register in a ReadVariableNode that occurs one node before the ReadPropertyNode.
+     *
      * @param n
      * @return
      */
-    protected Variable getBaseForReadPropertyNode(ReadPropertyNode n) {
+    protected synchronized Variable getBaseForReadPropertyNode(ReadPropertyNode n) {
         ReadVariableNode baseRead = ((ReadVariableNode) getNodeByIndex(
                 n.getIndex() - 1,
                 n.getBlock().getFunction()
@@ -332,10 +337,11 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
     /**
      * Retrieves the variable associated with the result register for a ReadPropertyNode. The variable is always written
      * to from the result register in a WriteVariableNode that occurs one node after the ReadPropertyNode.
+     *
      * @param n
      * @return
      */
-    protected Variable getResultForReadPropertyNode(ReadPropertyNode n) {
+    protected synchronized Variable getResultForReadPropertyNode(ReadPropertyNode n) {
         WriteVariableNode resultWrite = ((WriteVariableNode) getNodeByIndex(
                 n.getIndex() + 1,
                 n.getBlock().getFunction()
@@ -346,10 +352,11 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
     /**
      * Retrieves the variable associated with the base register for a WritePropertyNode. The variable is always loaded
      * into the base register in a ReadVariableNode that occurs two nodes before the WritePropertyNode.
+     *
      * @param n
      * @return
      */
-    protected Variable getBaseForWritePropertyNode(WritePropertyNode n) {
+    protected synchronized Variable getBaseForWritePropertyNode(WritePropertyNode n) {
         ReadVariableNode baseRead = ((ReadVariableNode) getNodeByIndex(
                 n.getIndex() - 2,
                 n.getBlock().getFunction()
@@ -360,10 +367,11 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
     /**
      * Retrieves the variable associated with the value register for a WritePropertyNode. The variable is always loaded
      * into the value register in a ReadVariableNode that occurs one node before the WritePropertyNode.
+     *
      * @param n
      * @return
      */
-    protected Value getValForWritePropertyNode(WritePropertyNode n) {
+    protected synchronized Value getValForWritePropertyNode(WritePropertyNode n) {
         Node node = getNodeByIndex(
                 n.getIndex() - 1,
                 n.getBlock().getFunction()
@@ -380,8 +388,91 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
         throw new RuntimeException("Unknown type for WritePropertyNode predecessor: " + node.getClass());
     }
 
-    protected static class FlowFunctionUtil {
-        protected static final Set<Function> allInvocationsFound = new HashSet<>();
-        protected static final Set<CallNode> allCalleesFound = new HashSet<>();
+    /**
+     * Find all functions that could be call targets of the provided CallNode
+     *
+     * @param n
+     * @return
+     */
+    protected synchronized LiveCollection<Function> resolveFunctionCall(CallNode n) {
+        usedRegisters.computeIfAbsent(
+                n.getFunctionRegister(),
+                id -> new Register(id, n.getBlock().getFunction())
+        );
+        LiveCollection<Allocation> predecessorUnion = new LiveSet<>(queryManager.scheduler());
+        for (var predecessor : getPredecessors(n)) {
+            sync.pds.solver.nodes.Node<NodeState, Value> initialQuery = new sync.pds.solver.nodes.Node<>(
+                    new NodeState(predecessor),
+                    usedRegisters.get(n.getFunctionRegister())
+            );
+            final var solver = queryManager.getOrStartBackwardQuery(initialQuery);
+            predecessorUnion = solver.getPointsToGraph().getPointsToSet(predecessor, usedRegisters.get(n.getFunctionRegister()))
+                    .union(predecessorUnion);
+        }
+        return AbstractFlowFunctions.allocationsToFunctions(predecessorUnion);
     }
+
+    protected synchronized Collection<Node> getPredecessors(Node n) {
+        return predecessorMapCache
+                .computeIfAbsent(n.getBlock().getFunction(), FlowGraphBuilder::makeNodePredecessorMap)
+                .get(n)
+                .stream()
+                .filter(abstractNode -> abstractNode instanceof Node)
+                .map(abstractNode -> ((Node) abstractNode))
+                .collect(Collectors.toSet());
+    }
+
+    /**
+     * A record for containing all mutable state of the current flow functions.
+     * This allows saving the current flow function state and restoring it when new results
+     * of subqueries are discovered. See `visit(CallNode n)` in BackwardFlowFunctions for
+     * an example.
+     */
+    protected record FlowFunctionState(
+            Set<Variable> declaredVariables,
+            Map<Integer, Register> usedRegisters,
+            Value queryValue,
+            sync.pds.solver.nodes.Node<NodeState, Value> pdsNode) {
+    }
+
+    /**
+     * Create a new instance of the flow functions initialized to the given state. The state
+     * of the resulting flow functions will be a deep copy of the given state.
+     */
+    protected abstract AbstractFlowFunctions copyFromFlowFunctionState(FlowFunctionState state);
+
+    private FlowFunctionState copyFlowFunctionState() {
+        final var usedRegisterCopy = new HashMap<>(usedRegisters);
+        final var declaredVarsCopy = new HashSet<>(declaredVariables);
+        final var queryValue = getQueryValue();
+        final var currentSPDSNode = currentPDSNode;
+        return new FlowFunctionState(declaredVarsCopy, usedRegisterCopy, queryValue, currentSPDSNode);
+    }
+
+    /**
+     * Executes the given `handler` on each result discovered by `subquery`. The handler is executed
+     * with `containingSolver`s flow function instance set to a new flow function instance with the state at
+     * the point where `continueWithSubqueryResult` was invoked.
+     * <p/>
+     * The handler code should avoid modifying any mutable state on the invoking flow function instance.
+     * If the state of the new flow function instance needs to be modified directly (rather than through
+     * calls to the `containingSolver`, use the second overloaded variant instead).
+     * <p/>
+     * To ensure predictable results, the handler code must not modify the mutable state of the invoking
+     * instance.
+     */
+    public final <A> void continueWithSubqueryResult(LiveCollection<A> subquery, QueryID queryID, Consumer<A> handler) {
+        continueWithSubqueryResult(subquery, queryID, (result, newFlowFunctions) -> handler.accept(result));
+    }
+
+    public final <A> void continueWithSubqueryResult(LiveCollection<A> subquery, QueryID queryID, BiConsumer<A, AbstractFlowFunctions> handler) {
+        final var flowFunctionState = copyFlowFunctionState();
+        if (containingSolver != null) {
+            subquery.onAdd(TaggedHandler.create(queryID, result -> {
+                final var newFlowFunctions = copyFromFlowFunctionState(flowFunctionState);
+                containingSolver.withFlowFunctions(newFlowFunctions, () -> handler.accept(result, newFlowFunctions));
+            }));
+        }
+    }
+
 }

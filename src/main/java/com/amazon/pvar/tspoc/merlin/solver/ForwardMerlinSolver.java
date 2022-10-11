@@ -15,6 +15,7 @@
 
 package com.amazon.pvar.tspoc.merlin.solver;
 
+import com.amazon.pvar.tspoc.merlin.DebugUtils;
 import com.amazon.pvar.tspoc.merlin.ir.*;
 import com.amazon.pvar.tspoc.merlin.solver.flowfunctions.AbstractFlowFunctions;
 import com.amazon.pvar.tspoc.merlin.solver.flowfunctions.ForwardFlowFunctions;
@@ -28,15 +29,14 @@ import wpds.impl.WeightedPAutomaton;
 import wpds.interfaces.State;
 import wpds.interfaces.WPAStateListener;
 
-import java.util.Collection;
-import java.util.Set;
-
 public class ForwardMerlinSolver extends MerlinSolver {
 
-    private final ForwardFlowFunctions flowFunctions = new ForwardFlowFunctions(callGraph);
+    private ForwardFlowFunctions flowFunctions;
 
-    public ForwardMerlinSolver(CallGraph callGraph, PointsToGraph pointsToGraph, Node<NodeState, Value> initialQuery) {
-        super(callGraph, pointsToGraph, initialQuery);
+    public ForwardMerlinSolver(QueryManager queryManager, Node<NodeState, Value> initialQuery) {
+        super(queryManager, initialQuery);
+        flowFunctions = new ForwardFlowFunctions(this, queryManager);
+        DebugUtils.debug("Creating forwards solver for " + initialQuery);
         if (initialQuery.fact() instanceof Allocation) {
             registerPointsToUpdateListener(initialQuery);
         }
@@ -67,7 +67,7 @@ public class ForwardMerlinSolver extends MerlinSolver {
                             return;
                         }
                         Node<NodeState, Value> node = transition.getStart().fact();
-                        pointsToGraph.addPointsToFact(
+                        queryManager.getPointsToGraph().addPointsToFact(
                                 node.stmt().getNode(),
                                 node.fact(),
                                 ((Allocation) initialQuery.fact())
@@ -83,30 +83,19 @@ public class ForwardMerlinSolver extends MerlinSolver {
     }
 
     /**
-     * If this query started at an allocation site, then for every new state we reach, we add new points-to information.
-     *
-     * @param node
-     * @param nextStates
-     */
-    @Override
-    protected void updatePointsTo(Node<NodeState, Value> node, Set<State> nextStates) {}
-
-    /**
      * If this solver is attempting to find callees of a function, and it has reached a call site, add a new call edge
      * to the call graph
-     * @param node
-     * @param nextStates
      */
     @Override
-    protected void updateCallGraph(Node<NodeState, Value> node, Set<State> nextStates) {
-        super.updateCallGraph(node, nextStates);
+    protected void updateCallGraph(Node<NodeState, Value> node, State nextState) {
+        super.updateCallGraph(node, nextState);
         if (initialQuery.fact() instanceof FunctionAllocation funcAlloc) {
             dk.brics.tajs.flowgraph.jsnodes.Node tajsNode = node.stmt().getNode();
             if (tajsNode instanceof CallNode callNode) {
                 Register callNodeFunctionRegister =
                         new Register(callNode.getFunctionRegister(), callNode.getBlock().getFunction());
                 if (node.fact().equals(callNodeFunctionRegister)) {
-                    callGraph.addEdge(callNode, ((DeclareFunctionNode) funcAlloc.getAllocationStatement()).getFunction());
+                    queryManager.getCallGraph().addEdge(callNode, ((DeclareFunctionNode) funcAlloc.getAllocationStatement()).getFunction());
                 }
             }
         }
@@ -122,9 +111,10 @@ public class ForwardMerlinSolver extends MerlinSolver {
                         // If the transition target is the same as the initial query value, the analysis should continue
                         // past the unbalanced pop because the value flows past the return stmt of the current function
                         if (targetVal.equals(ForwardMerlinSolver.this.initialQuery.fact())) {
-                            Collection<CallNode> callSites =
-                                    callGraph.getCallers(transition.getLabel().getNode().getBlock().getFunction());
-                            callSites.forEach(callNode -> {
+                            final var targetFunc = transition.getLabel().getNode().getBlock().getFunction();
+                            final var callSites = getFlowFunctions().findInvocationsOfFunction(targetFunc);
+                            final var queryID = getQueryID(curr, true, true);
+                            getFlowFunctions().continueWithSubqueryResult(callSites, queryID, callNode -> {
                                 Node<NodeState, Value> normalizedCallPop = new Node<>(
                                         new NodeState(callNode),
                                         valueINode.fact()
@@ -148,7 +138,8 @@ public class ForwardMerlinSolver extends MerlinSolver {
         super.processPop(curr, popNode);
     }
 
-    public void solve() {
+    @Override
+    public synchronized void solve() {
         INode<Value> callTarget = new SingleNode<>(initialQuery.fact());
         INode<sync.pds.solver.nodes.Node<NodeState, Value>> fieldTarget = new SingleNode<>(initialQuery);
         solve(
@@ -163,5 +154,27 @@ public class ForwardMerlinSolver extends MerlinSolver {
     @Override
     public String toString() {
         return "Forward" + super.toString();
+    }
+
+    @Override
+    public String getQueryString() {
+        return "Forward: " + initialQuery.toString();
+    }
+
+    @Override
+    public QueryID getQueryID(Node<NodeState, Value> subQuery, boolean isSubQueryForward, boolean inUnbalancedPopListener) {
+        return new QueryID(new Query(initialQuery, true), new Query(subQuery, isSubQueryForward), inUnbalancedPopListener);
+    }
+
+    @Override
+    public synchronized void withFlowFunctions(AbstractFlowFunctions flowFunctions, Runnable runnable) {
+        if (flowFunctions instanceof ForwardFlowFunctions forwardFlowFunctions) {
+            final var oldFlowFunctions = this.flowFunctions;
+            this.flowFunctions = forwardFlowFunctions;
+            runnable.run();
+            this.flowFunctions = oldFlowFunctions;
+        } else {
+            throw new RuntimeException("BUG: Tried to use non-forward flow functions with ForwardMerlinSolver");
+        }
     }
 }
