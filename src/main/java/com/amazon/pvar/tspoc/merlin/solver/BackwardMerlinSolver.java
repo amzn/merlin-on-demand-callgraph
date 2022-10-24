@@ -15,6 +15,7 @@
 
 package com.amazon.pvar.tspoc.merlin.solver;
 
+import com.amazon.pvar.tspoc.merlin.DebugUtils;
 import com.amazon.pvar.tspoc.merlin.ir.*;
 import com.amazon.pvar.tspoc.merlin.solver.flowfunctions.AbstractFlowFunctions;
 import com.amazon.pvar.tspoc.merlin.solver.flowfunctions.BackwardFlowFunctions;
@@ -22,7 +23,6 @@ import dk.brics.tajs.flowgraph.jsnodes.CallNode;
 import dk.brics.tajs.flowgraph.jsnodes.ConstantNode;
 import dk.brics.tajs.flowgraph.jsnodes.DeclareFunctionNode;
 import dk.brics.tajs.flowgraph.jsnodes.NewObjectNode;
-import sync.pds.solver.SyncStatePDSUpdateListener;
 import sync.pds.solver.nodes.*;
 import wpds.impl.Transition;
 import wpds.impl.UnbalancedPopListener;
@@ -30,20 +30,19 @@ import wpds.impl.Weight;
 import wpds.impl.WeightedPAutomaton;
 import wpds.interfaces.State;
 import wpds.interfaces.WPAStateListener;
-import wpds.interfaces.WPAUpdateListener;
 
-import java.util.Collection;
 import java.util.Objects;
-import java.util.Set;
 
 public class BackwardMerlinSolver extends MerlinSolver {
 
-    private final BackwardFlowFunctions flowFunctions = new BackwardFlowFunctions(callGraph);
+    private BackwardFlowFunctions flowFunctions;
 
     private boolean isFunctionQuery = false;
 
-    public BackwardMerlinSolver(CallGraph callGraph, PointsToGraph pointsToGraph, Node<NodeState, Value> initialQuery) {
-        super(callGraph, pointsToGraph, initialQuery);
+    public BackwardMerlinSolver(QueryManager queryManager, Node<NodeState, Value> initialQuery) {
+        super(queryManager, initialQuery);
+        flowFunctions = new BackwardFlowFunctions(this, queryManager);
+        DebugUtils.debug("Creating backwards solver for query: " + initialQuery);
         registerPointsToUpdateListener(initialQuery);
     }
 
@@ -77,7 +76,7 @@ public class BackwardMerlinSolver extends MerlinSolver {
                                 node.fact() instanceof Register register) {
                             if (newObjectNode.getResultRegister() == register.getId()) {
                                 ObjectAllocation objAlloc = new ObjectAllocation(newObjectNode);
-                                pointsToGraph.addPointsToFact(
+                                queryManager.getPointsToGraph().addPointsToFact(
                                         initialQuery.stmt().getNode(),
                                         initialQuery.fact(), objAlloc
                                 );
@@ -86,7 +85,7 @@ public class BackwardMerlinSolver extends MerlinSolver {
                                 node.fact() instanceof Register register) {
                             if (constantNode.getResultRegister() == register.getId()) {
                                 ConstantAllocation constantAllocation = new ConstantAllocation(constantNode);
-                                pointsToGraph.addPointsToFact(
+                                queryManager.getPointsToGraph().addPointsToFact(
                                         initialQuery.stmt().getNode(),
                                         initialQuery.fact(),
                                         constantAllocation
@@ -96,7 +95,7 @@ public class BackwardMerlinSolver extends MerlinSolver {
                             if (node.fact() instanceof Register register) {
                                 if (funcNode.getResultRegister() == register.getId()) {
                                     FunctionAllocation functionAllocation = new FunctionAllocation(funcNode);
-                                    pointsToGraph.addPointsToFact(
+                                    queryManager.getPointsToGraph().addPointsToFact(
                                             initialQuery.stmt().getNode(),
                                             initialQuery.fact(),
                                             functionAllocation
@@ -106,7 +105,7 @@ public class BackwardMerlinSolver extends MerlinSolver {
                                 if (Objects.nonNull(funcNode.getFunction().getName()) &&
                                         funcNode.getFunction().getName().equals(var.getVarName())) {
                                     FunctionAllocation functionAllocation = new FunctionAllocation(funcNode);
-                                    pointsToGraph.addPointsToFact(
+                                    queryManager.getPointsToGraph().addPointsToFact(
                                             initialQuery.stmt().getNode(),
                                             initialQuery.fact(),
                                             functionAllocation
@@ -126,8 +125,8 @@ public class BackwardMerlinSolver extends MerlinSolver {
      * @param nextStates
      */
     @Override
-    protected void updateCallGraph(Node<NodeState, Value> node, Set<State> nextStates) {
-        super.updateCallGraph(node, nextStates);
+    protected void updateCallGraph(Node<NodeState, Value> node, State nextState) {
+        super.updateCallGraph(node, nextState);
         if (isFunctionQuery) {
             if (node.stmt().getNode() instanceof DeclareFunctionNode declareFunctionNode) {
                 if (node
@@ -144,7 +143,7 @@ public class BackwardMerlinSolver extends MerlinSolver {
                             .getBlock()
                             .getSingleSuccessor()
                             .getFirstNode();
-                    callGraph.addEdge(initialCallNode, declareFunctionNode.getFunction());
+                    queryManager.getCallGraph().addEdge(initialCallNode, declareFunctionNode.getFunction());
                 }
             }
         }
@@ -153,16 +152,6 @@ public class BackwardMerlinSolver extends MerlinSolver {
     @Override
     public AbstractFlowFunctions getFlowFunctions() {
         return flowFunctions;
-    }
-
-    /**
-     * If data flow has reached an allocation site, we update the points-to information for the original query
-     *
-     * @param node
-     * @param nextStates
-     */
-    @Override
-    protected void updatePointsTo(Node<NodeState, Value> node, Set<State> nextStates) {
     }
 
     /**
@@ -178,23 +167,24 @@ public class BackwardMerlinSolver extends MerlinSolver {
     @Override
     public void processPop(Node<NodeState, Value> curr, PopNode popNode) {
         UnbalancedPopListener<NodeState, INode<Value>, Weight.NoWeight> unbalancedPopListener =
-                new UnbalancedPopListener<>() {
-                    @Override
-                    public void unbalancedPop(INode<Value> valueINode, Transition<NodeState, INode<Value>> transition, Weight.NoWeight noWeight) {
-                        Value targetVal = transition.getTarget().fact();
-                        // If the transition target is the same as the initial query value, the analysis should continue
-                        // past the unbalanced pop because the value flows past the entry point of the current function
-                        if (targetVal.equals(BackwardMerlinSolver.this.initialQuery.fact())) {
-                            Collection<CallNode> callSites =
-                                    callGraph.getCallers(transition.getLabel().getNode().getBlock().getFunction());
-                            callSites.forEach(callNode -> {
-                                Node<NodeState, Value> normalizedCallPop = new Node<>(
-                                        new NodeState(callNode),
-                                        valueINode.fact()
-                                );
-                                propagate(curr, normalizedCallPop);
-                            });
-                        }
+                (valueINode, transition, noWeight) -> {
+                    Value targetVal = transition.getTarget().fact();
+                    // If the transition target is the same as the initial query value, the analysis should continue
+                    // past the unbalanced pop because the value flows past the entry point of the current function
+                    if (targetVal.equals(BackwardMerlinSolver.this.initialQuery.fact())) {
+                        DebugUtils.debug("Following unbalanced pop flow for " + BackwardMerlinSolver.this.initialQuery.fact());
+                        final var func = transition.getLabel().getNode().getBlock().getFunction();
+                        final var callSites = getFlowFunctions().findInvocationsOfFunction(func);
+                        final var queryID = getQueryID(curr, true, true);
+                        getFlowFunctions().continueWithSubqueryResult(callSites, queryID, callNode -> {
+                            Node<NodeState, Value> normalizedCallPop = new Node<>(
+                                    new NodeState(callNode),
+                                    valueINode.fact()
+                            );
+                            propagate(curr, normalizedCallPop);
+                        });
+                    } else {
+                        DebugUtils.debug("Unbalanced pop with target " + targetVal + " doesn't match initialQuery: " + BackwardMerlinSolver.this.initialQuery);
                     }
                 };
         // Apply field normal flow
@@ -211,7 +201,8 @@ public class BackwardMerlinSolver extends MerlinSolver {
         super.processPop(curr, popNode);
     }
 
-    public void solve() {
+    @Override
+    public synchronized void solve() {
         INode<Value> callTarget = new SingleNode<>(initialQuery.fact());
         INode<sync.pds.solver.nodes.Node<NodeState, Value>> fieldTarget = new SingleNode<>(initialQuery);
         solve(
@@ -234,5 +225,27 @@ public class BackwardMerlinSolver extends MerlinSolver {
     @Override
     public String toString() {
         return "Backward" + super.toString();
+    }
+
+    @Override
+    public String getQueryString() {
+        return "Backward: " + initialQuery.toString();
+    }
+
+    @Override
+    public QueryID getQueryID(Node<NodeState, Value> subQuery, boolean isSubQueryForward, boolean inUnbalancedPopListener) {
+        return new QueryID(new Query(initialQuery, false), new Query(subQuery, isSubQueryForward), inUnbalancedPopListener);
+    }
+
+    @Override
+    public synchronized void withFlowFunctions(AbstractFlowFunctions flowFunctions, Runnable runnable) {
+        if (flowFunctions instanceof BackwardFlowFunctions backwardFlowFunctions) {
+            final var oldFlowFunctions = this.flowFunctions;
+            this.flowFunctions = backwardFlowFunctions;
+            runnable.run();
+            this.flowFunctions = oldFlowFunctions;
+        } else {
+            throw new RuntimeException("BUG: Tried to use non-backward flow functions with BackwardMerlinSolver");
+        }
     }
 }

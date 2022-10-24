@@ -15,17 +15,16 @@
 
 package com.amazon.pvar.tspoc.merlin.solver.flowfunctions;
 
+import com.amazon.pvar.tspoc.merlin.DebugUtils;
 import com.amazon.pvar.tspoc.merlin.ir.*;
-import com.amazon.pvar.tspoc.merlin.solver.BackwardMerlinSolver;
-import com.amazon.pvar.tspoc.merlin.solver.CallGraph;
-import com.amazon.pvar.tspoc.merlin.solver.MerlinSolverFactory;
-import com.amazon.pvar.tspoc.merlin.solver.PointsToGraph;
-import com.amazon.pvar.tspoc.merlin.solver.querygraph.QueryGraph;
+import com.amazon.pvar.tspoc.merlin.livecollections.LiveCollection;
+import com.amazon.pvar.tspoc.merlin.solver.*;
 import dk.brics.tajs.flowgraph.AbstractNode;
 import dk.brics.tajs.flowgraph.Function;
 import dk.brics.tajs.flowgraph.SourceLocation;
 import dk.brics.tajs.flowgraph.jsnodes.*;
 import dk.brics.tajs.js2flowgraph.FlowGraphBuilder;
+import wpds.interfaces.State;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -37,8 +36,13 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
      */
     private final Map<Function, Map<AbstractNode, Set<AbstractNode>>> successorMapCache = new HashMap<>();
 
-    public ForwardFlowFunctions(CallGraph callGraph) {
-        super(callGraph);
+    public ForwardFlowFunctions(MerlinSolver containingSolver, QueryManager queryManager) {
+        super(containingSolver, queryManager);
+    }
+
+    @Override
+    public Collection<Node> nextNodes(Node n) {
+        return getSuccessors(n);
     }
 
     /**
@@ -81,38 +85,39 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
             return;
         }
 
-        Collection<Function> callTargets = resolveFunctionCall(n);
-
-        callTargets.forEach(targetFunction -> {
-            Node entryPoint = ((Node) targetFunction.getEntry().getFirstNode());
-            // Propagate queryVal to the target function's environment, if necessary
-            if (getQueryValue() instanceof Variable var) {
-                // Check if the target function or any of its nested functions actually reference var
-                // before propagating - prevents unnecessarily large points-to sets
-                if (var.isVisibleIn(targetFunction)) {
-                    SyntacticReferenceResolver resolver = new SyntacticReferenceResolver(targetFunction, var);
-                    if (resolver.isVarReferencedInNestedScopes()) {
-                        addCallPushState(entryPoint, var, n);
+        // Save current flow function state and capture it in closure:
+        final var currentQueryValue = getQueryValue();
+        final var currentSPDSNode = currentPDSNode;
+        if (containingSolver != null) {
+            final var queryID = containingSolver.getQueryID(currentSPDSNode, false, false);
+            continueWithSubqueryResult(resolveFunctionCall(n), queryID, (targetFunction, newFlowFunctions)-> {
+                DebugUtils.debug(this.containingSolver.getQueryString() + "; New target function: " +
+                        targetFunction + " for query " + this.containingSolver.getQueryString() +
+                        " and query var " + currentQueryValue + " for call node: " + n);
+                Node entryPoint = ((Node) targetFunction.getEntry().getFirstNode());
+                if (currentQueryValue instanceof Variable var) {
+                    if (var.isVisibleIn(targetFunction)) {
+                        final var nextState = callPushState(entryPoint, var, n);
+                        containingSolver.propagate(currentSPDSNode, nextState);
                     }
-                }
-            } else {
-                // Propagate flow from arg registers to params in the callee
-                for (int i = 0; i < numArgs; i++) {
-                    Register argRegister = usedRegisters.get(n.getArgRegister(i));
-                    try {
-                        String paramName = targetFunction.getParameterNames().get(i);
-                        Variable param = new Variable(paramName, targetFunction);
-                        declaredVariables.add(param);
-                        if (getQueryValue().equals(argRegister)) {
-                            addCallPushState(entryPoint, param, n);
+                } else {
+                    for (int i = 0; i < numArgs; i++) {
+                        Register argRegister = new Register(n.getArgRegister(i), n.getBlock().getFunction());
+                        try {
+                            String paramName = targetFunction.getParameterNames().get(i);
+                            Variable param = new Variable(paramName, targetFunction);
+                            newFlowFunctions.declaredVariables.add(param);
+                            if (currentQueryValue.equals(argRegister)) {
+                                final var nextState = callPushState(entryPoint, param, n);
+                                containingSolver.propagate(currentSPDSNode, nextState);
+                            }
+                        } catch (IndexOutOfBoundsException e) {
+                            // Do nothing, if we pass an extra unused arg to a function, there's no need to propagate
                         }
-                    } catch (IndexOutOfBoundsException e) {
-                        // Do nothing, if we pass an extra unused arg to a function, there's no need to propagate
                     }
                 }
-            }
-        });
-
+            });
+        }
         // Propagate values across the call site
         treatAsNop(n);
         usedRegisters.clear();
@@ -322,18 +327,22 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
             // end of program
             return;
         }
-        Register result = usedRegisters
-                .computeIfAbsent(n.getReturnValueRegister(), id -> new Register(id, n.getBlock().getFunction()));
-        Collection<CallNode> possibleReturnSites = findInvocationsOfFunction(n.getBlock().getFunction());
+        Register result = usedRegisters.computeIfAbsent(n.getReturnValueRegister(), id -> new Register(id, n.getBlock().getFunction()));
         // Handle return value assignment
+        final var containingFunction = n.getBlock().getFunction();
+        LiveCollection<CallNode> possibleReturnSites = findInvocationsOfFunction(containingFunction);
         if (getQueryValue().equals(result)) {
-            possibleReturnSites.forEach(returnSite -> {
-                Register returnReg = new Register(returnSite.getResultRegister(), returnSite.getBlock().getFunction());
-                addCallPopState(
-                        returnSite,
-                        returnReg
-                );
-            });
+            if (containingSolver != null) {
+                final var currentSPDSNode = currentPDSNode;
+                final var queryID = containingSolver.getQueryID(currentSPDSNode, true, false);
+                continueWithSubqueryResult(possibleReturnSites, queryID, returnSite -> {
+                    DebugUtils.debug("Found return site: " + returnSite + " for " +
+                            n.getBlock().getFunction() + "[fwd query: " + containingSolver.initialQuery + "]");
+                    Register returnReg = new Register(returnSite.getResultRegister(), returnSite.getBlock().getFunction());
+                    State popState = callPopState(returnSite, returnReg);
+                    containingSolver.propagate(currentSPDSNode, popState);
+                });
+            }
         }
 
         // TODO: Handle return propagation of formal parameters
@@ -410,8 +419,7 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
      */
     @Override
     public void visit(WriteVariableNode n) {
-        Register argRegister = usedRegisters
-                .computeIfAbsent(n.getValueRegister(), id -> new Register(id, n.getBlock().getFunction()));
+        Register argRegister = usedRegisters.computeIfAbsent(n.getValueRegister(), id -> new Register(id, n.getBlock().getFunction()));
         Variable write = new Variable(
                 n.getVariableName(),
                 getDeclaringScope(n.getVariableName(), n.getBlock().getFunction())
@@ -464,19 +472,19 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     @Override
-    protected void killAt(Node n, Set<Value> killed) {
+    protected synchronized void killAt(Node n, Set<Value> killed) {
         getSuccessors(n)
                 .forEach(node -> addStandardNormalFlow(node, killed));
     }
 
     @Override
-    protected void treatAsNop(Node n) {
+    protected synchronized void treatAsNop(Node n) {
         getSuccessors(n)
                 .forEach(this::addStandardNormalFlow);
     }
 
     @Override
-    protected void genSingleNormalFlow(Node n, Value v) {
+    protected synchronized void genSingleNormalFlow(Node n, Value v) {
         getSuccessors(n)
                 .forEach(node -> addSingleState(node, v));
     }
@@ -497,57 +505,7 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
         return inverse;
     }
 
-    /**
-     * Resolve possible functions pointed to by the function register at the call site by issuing a backward query
-     *
-     * @param n
-     * @return
-     */
-    private Collection<Function> resolveFunctionCall(CallNode n) {
-        if (FlowFunctionUtil.allCalleesFound.contains(n)) {
-            return callGraph.getCallTargets(n);
-        }
-        PointsToGraph ptg = MerlinSolverFactory
-                .peekCurrentActiveSolver()
-                .getPointsToGraph();
-        if (ptg.isLocationComplete(n, usedRegisters.get(n.getFunctionRegister()))) {
-            return ptg.getPointsToSet(n, usedRegisters.get(n.getFunctionRegister()))
-                    .stream()
-                    .filter(alloc -> alloc instanceof FunctionAllocation)
-                    .map(alloc -> ((DeclareFunctionNode) alloc.getAllocationStatement()).getFunction())
-                    .collect(Collectors.toSet());
-        }
-        Node immediatePredecessor = ((Node) FlowGraphBuilder
-                .makeNodePredecessorMap(n.getBlock().getFunction())
-                .get(n)
-                .stream()
-                .findFirst()
-                .orElseThrow());
-        sync.pds.solver.nodes.Node<NodeState, Value> initialQuery = new sync.pds.solver.nodes.Node<>(
-                new NodeState(immediatePredecessor),
-                usedRegisters.computeIfAbsent(
-                        n.getFunctionRegister(),
-                        id -> new Register(id, n.getBlock().getFunction())
-                )
-        );
-        BackwardMerlinSolver solver = MerlinSolverFactory.getNewBackwardSolver(initialQuery);
-        QueryGraph.getInstance().addEdge(MerlinSolverFactory.peekCurrentActiveSolver(), solver);
-        MerlinSolverFactory.addNewActiveSolver(solver);
-        solver.setFunctionQuery(true);
-        solver.solve();
-        MerlinSolverFactory.removeCurrentActiveSolver();
-        solver.getPointsToGraph().markLocationComplete(initialQuery.stmt().getNode(), initialQuery.fact());
-        FlowFunctionUtil.allCalleesFound.add(n);
-        return solver
-                .getPointsToGraph()
-                .getPointsToSet(immediatePredecessor, usedRegisters.get(n.getFunctionRegister()))
-                .stream()
-                .filter(alloc -> alloc instanceof FunctionAllocation)
-                .map(alloc -> ((DeclareFunctionNode) alloc.getAllocationStatement()).getFunction())
-                .collect(Collectors.toSet());
-    }
-
-    private Collection<Node> getSuccessors(Node n) {
+    private synchronized Collection<Node> getSuccessors(Node n) {
         return successorMapCache
                 .computeIfAbsent(
                         n.getBlock().getFunction(),
@@ -560,28 +518,29 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
                 .collect(Collectors.toSet());
     }
 
-    private void addCallPushState(Node entryNode, Value val, CallNode callSite) {
-        addSingleCallPushState(
-                entryNode,
-                val,
-                callSite
-        );
-    }
-
-    private void addCallPopState(CallNode returnSite, Value valueToPropagate) {
-        addSingleCallPopState(returnSite, valueToPropagate);
-    }
-
-    private void addPropPopState(Node n, Value val, Property property) {
+    private synchronized void addPropPopState(Node n, Value val, Property property) {
         getSuccessors(n).forEach(succ -> {
             addSinglePropPopState(succ, val, property);
         });
     }
 
-    private void addPropPushState(WritePropertyNode n, Value base, Property property) {
+    private synchronized void addPropPushState(WritePropertyNode n, Value base, Property property) {
         getSuccessors(n).forEach(succ -> {
             addSinglePropPushState(succ, base, property);
         });
     }
 
+    private ForwardFlowFunctions(MerlinSolver containingSolver, QueryManager queryManager, FlowFunctionState savedState) {
+        super(containingSolver, queryManager);
+        this.usedRegisters = new HashMap<>(savedState.usedRegisters());
+        this.declaredVariables = new HashSet<>(savedState.declaredVariables());
+        this.queryValue = savedState.queryValue();
+        this.currentPDSNode = savedState.pdsNode();
+
+    }
+
+    @Override
+    protected ForwardFlowFunctions copyFromFlowFunctionState(FlowFunctionState state) {
+        return new ForwardFlowFunctions(containingSolver, queryManager, state);
+    }
 }

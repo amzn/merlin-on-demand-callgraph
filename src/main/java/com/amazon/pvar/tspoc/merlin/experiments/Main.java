@@ -18,8 +18,7 @@ package com.amazon.pvar.tspoc.merlin.experiments;
 import com.amazon.pvar.tspoc.merlin.ir.*;
 import com.amazon.pvar.tspoc.merlin.solver.BackwardMerlinSolver;
 import com.amazon.pvar.tspoc.merlin.solver.CallGraph;
-import com.amazon.pvar.tspoc.merlin.solver.MerlinSolverFactory;
-import com.amazon.pvar.tspoc.merlin.solver.querygraph.QueryGraph;
+import com.amazon.pvar.tspoc.merlin.solver.QueryManager;
 import dk.brics.tajs.flowgraph.FlowGraph;
 import dk.brics.tajs.flowgraph.jsnodes.CallNode;
 import dk.brics.tajs.flowgraph.jsnodes.DeclareFunctionNode;
@@ -83,8 +82,8 @@ public class Main {
         }
         
         String[] inputs = { jsFile.toAbsolutePath().toString(), "-babel", "-config", tajsConfigFileStr };
-        var analysis = dk.brics.tajs.Main.init(inputs, null);
-        var flowGraph = analysis.getSolver().getFlowGraph();
+        final var analysis = dk.brics.tajs.Main.init(inputs, null);
+        final var flowGraph = analysis.getSolver().getFlowGraph();
         return flowGraph;
     }
 
@@ -150,11 +149,8 @@ public class Main {
         timer.start();
         taintQueries.forEach(query -> {
             ExperimentUtils.Statistics.incrementTotalQueries();
-            QueryGraph.reset();
-            MerlinSolverFactory.reset();
-            BackwardMerlinSolver solver = MerlinSolverFactory.getNewBackwardSolver(query);
-            QueryGraph.getInstance().setRoot(solver);
-            MerlinSolverFactory.addNewActiveSolver(solver);
+            final var queryManager = new QueryManager();
+            BackwardMerlinSolver solver = queryManager.getOrCreateBackwardSolver(query);
             try {
                 outputWriter.write("Query: " + query + "\n");
             } catch (IOException e) {
@@ -196,7 +192,7 @@ public class Main {
     private static void updateCG(BackwardMerlinSolver solver, Node<NodeState, Value> query) {
         Collection<Allocation> allocs = solver
                 .getPointsToGraph()
-                .getPointsToSet(query.stmt().getNode(), query.fact());
+                .getPointsToSet(query.stmt().getNode(), query.fact()).toJavaSet();
         allocs.stream()
                 .filter(alloc -> alloc instanceof FunctionAllocation)
                 .forEach(funcAlloc -> solver
