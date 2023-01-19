@@ -1,0 +1,9 @@
+eval-jam/node_modules/*
+.bsp
+.idea
+.metals
+.sbtopts
+.vscode
+eval-jam/dist
+project/target
+target
