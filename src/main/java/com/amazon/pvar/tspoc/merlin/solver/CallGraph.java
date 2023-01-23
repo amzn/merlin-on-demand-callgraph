@@ -15,9 +15,15 @@
 
 package com.amazon.pvar.tspoc.merlin.solver;
 
+import com.amazon.pvar.tspoc.merlin.experiments.Location;
+import com.amazon.pvar.tspoc.merlin.experiments.SerializableCallGraph;
+import com.amazon.pvar.tspoc.merlin.experiments.SerializableCallGraphEdge;
+import com.amazon.pvar.tspoc.merlin.experiments.Span;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Multimap;
+import com.google.gson.*;
 import dk.brics.tajs.flowgraph.Function;
+import dk.brics.tajs.flowgraph.SourceLocation;
 import dk.brics.tajs.flowgraph.jsnodes.CallNode;
 
 import java.util.*;
@@ -25,10 +31,10 @@ import java.util.stream.Collectors;
 
 /**
  * Merlin's call graph representation.
- *
+ * <p>
  * The implementation includes an iterable edge set, as well as a callsite -> function multimap and a
  * function -> callsite multimap to support fast bidirectional lookup.
- *
+ * <p>
  * Note: This class is purely for reporting the resulting call graph at the end of the analysis.
  * To obtain callers or call sites during analysis, use getLiveKnownFunctionInvocations in PointsToGraph
  * or `resolveFunctionCallLive` in flow functions
@@ -80,6 +86,21 @@ public class CallGraph implements Iterable<CallGraph.Edge> {
             return callSite.getSourceLocation().getLineNumber() + " --> "
                     + callTarget.getNode().getSourceLocation().getLineNumber()
                     + "(" + callSite + " -> " + callTarget + ")";
+        }
+
+        private static Span toSpan(SourceLocation sourceLocation) {
+            return new Span(
+                new Location(sourceLocation.getLineNumber(), sourceLocation.getColumnNumber()),
+                new Location(sourceLocation.getEndLineNumber(), sourceLocation.getEndColumnNumber()),
+                sourceLocation.getLocation().getPath()
+            );
+        }
+
+        private SerializableCallGraphEdge toSerializable() {
+            return new SerializableCallGraphEdge(
+                toSpan(callTarget.getSourceLocation()),
+                toSpan(callSite.getSourceLocation())
+            );
         }
     }
 
@@ -151,6 +172,27 @@ public class CallGraph implements Iterable<CallGraph.Edge> {
                 .map(e -> e.toString() + "\n")
                 .collect(Collectors.joining())
                 .strip();
+    }
+
+    /**
+     * Produces a JSON representation of the call graph.
+     * <p/>
+     * See src/test/resources/js/callgraph/json-tests for the shape of the JSON that is produced.
+     * <p>
+     * Note that the edges are serialized in a non-deterministic order; any consumers of the resulting
+     * JSON should treat the `edges` array as a set rather than a list.
+     */
+    public JsonElement toJSON() {
+        final var gson = new Gson();
+        return gson.toJsonTree(toSerializableCallGraph(), SerializableCallGraph.class);
+    }
+
+    public SerializableCallGraph toSerializableCallGraph() {
+        final var serializedEdges = edgeSet
+            .stream()
+            .map(Edge::toSerializable)
+            .collect(Collectors.toSet());
+        return new SerializableCallGraph(serializedEdges);
     }
 
 }

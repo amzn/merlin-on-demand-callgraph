@@ -1,0 +1,28 @@
+{
+  "edges": [
+    {
+      "callee": {
+        "start": {
+          "line": 1,
+          "column": 1
+        },
+        "end": {
+          "line": 1,
+          "column": 18
+        },
+        "file": "src/test/resources/js/callgraph/json-tests/_babel/callgraph-json-test.js"
+      },
+      "caller": {
+        "start": {
+          "line": 3,
+          "column": 3
+        },
+        "end": {
+          "line": 3,
+          "column": 8
+        },
+        "file": "src/test/resources/js/callgraph/json-tests/_babel/callgraph-json-test.js"
+      }
+    }
+  ]
+}

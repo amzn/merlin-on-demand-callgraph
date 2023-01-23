@@ -52,6 +52,11 @@ libraryDependencies += "commons-cli" % "commons-cli" % "1.4"
 libraryDependencies += "org.slf4j" % "slf4j-api" % "1.7.30"
 libraryDependencies += "org.slf4j" % "slf4j-simple" % "2.0.3" % Test
 
+// Printing to JSON
+// https://mvnrepository.com/artifact/com.google.code.gson/gson
+libraryDependencies += "com.google.code.gson" % "gson" % "2.10.1"
+
+
 Compile / run / mainClass := Some(
   "com.amazon.pvar.tspoc.merlin.experiments.Main"
 )
