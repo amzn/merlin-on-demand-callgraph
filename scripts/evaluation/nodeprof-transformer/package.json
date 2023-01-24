@@ -1,0 +1,19 @@
+{
+  "name": "nodeprof-transformer",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.ts",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "makeComparable": "ts-node cli.ts"
+  },
+  "author": "",
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "commander": "^10.0.0",
+    "fs-extra": "^11.1.0",
+    "ts-node": "^10.9.1",
+    "@types/commander": "^2.12.2",
+    "@types/fs-extra": "^11.0.1"
+  }
+}

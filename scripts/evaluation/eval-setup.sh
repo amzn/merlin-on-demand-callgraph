@@ -88,6 +88,9 @@ sed -i '' "s+$PROJ_HOME_OLD+$PROJ_HOME_NEW+g" "${PATH_TO_JAM}"/src/static-config
 cd "$PATH_TO_JAM"
 echo "re-compiling Jam"
 npm run build
-cd "$CURRENT_DIR"
 
+echo "Installing nodeprof transformer"
+npm install --prefix "nodeprof-transformer" &>/dev/null
+
+cd "$CURRENT_DIR"
 echo "Finished setup"

@@ -65,8 +65,14 @@ if [ ! -d "dyn_cgs" ] ; then
 fi
 
 echo "Generating Dynamic CGs"
+CURRENT_DIR=$(pwd)
 for BENCHMARK in "${!BENCHMARKS[@]}"; do
-  bash dyn-cg.sh -j "${PATH_TO_JAM}" -b "${BENCHMARKS[$BENCHMARK]}" -n "${BENCHMARK}"
+  bash dyn-cg.sh -j "${PATH_TO_JAM}" -b "${BENCHMARKS[$BENCHMARK]}" -n "${BENCHMARK}.raw"
+
+  # reformat the dynamic CGs so that it's comparable to the static ones
+  cd nodeprof-transformer
+  npm run makeComparable -- --input ../dyn_cgs/"${BENCHMARK}.raw" --out ../dyn_cgs/"${BENCHMARK}.json"
+  cd "$CURRENT_DIR"  
 done
 
 # Generate Jam's CGs
