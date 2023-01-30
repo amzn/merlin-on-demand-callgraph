@@ -42,7 +42,7 @@ public class ObjectAllocation extends Register implements Allocation {
     }
 
     @Override
-    public Node getAllocationStatement() {
+    public NewObjectNode getAllocationStatement() {
         return allocationStatement;
     }
 

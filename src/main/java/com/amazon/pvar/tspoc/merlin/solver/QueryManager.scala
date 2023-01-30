@@ -1,7 +1,8 @@
 package com.amazon.pvar.tspoc.merlin.solver
 
-import com.amazon.pvar.tspoc.merlin.ir.{NodeState, Value}
+import com.amazon.pvar.tspoc.merlin.ir.{Allocation, FunctionAllocation, NodeState, Register, Value}
 import com.amazon.pvar.tspoc.merlin.livecollections.Scheduler
+import dk.brics.tajs.flowgraph.jsnodes.CallNode
 import sync.pds.solver.nodes.Node
 
 import scala.collection.mutable
@@ -68,6 +69,18 @@ class QueryManager() {
   def getPointsToGraph: PointsToGraph = pointsToGraph
 
   def getCallGraph: CallGraph = callGraph
+
+  def addPointsToFact(location: dk.brics.tajs.flowgraph.jsnodes.Node, value: Value, alloc: Allocation): Unit = {
+    this.getPointsToGraph.addPointsToFact(location, value, alloc)
+    (location, alloc, value) match {
+      case (callNode: CallNode, functionAllocation: FunctionAllocation, reg: Register)
+        if callNode.getFunctionRegister != -1 &&
+          reg.getId == callNode.getFunctionRegister &&
+          reg.getContainingFunction == callNode.getBlock.getFunction =>
+        this.getCallGraph.addEdge(callNode, functionAllocation.getAllocationStatement.getFunction)
+      case _ =>
+    }
+  }
 }
 
 /** Helper object to manage a single query manager via dynamic scoping rather

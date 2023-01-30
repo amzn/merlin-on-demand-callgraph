@@ -195,4 +195,7 @@ public class CallGraph implements Iterable<CallGraph.Edge> {
         return new SerializableCallGraph(serializedEdges);
     }
 
+    public Set<Edge> edgeSet() {
+        return edgeSet;
+    }
 }

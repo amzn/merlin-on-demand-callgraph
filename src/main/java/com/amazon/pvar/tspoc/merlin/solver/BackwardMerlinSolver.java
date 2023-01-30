@@ -76,7 +76,7 @@ public class BackwardMerlinSolver extends MerlinSolver {
                                 node.fact() instanceof Register register) {
                             if (newObjectNode.getResultRegister() == register.getId()) {
                                 ObjectAllocation objAlloc = new ObjectAllocation(newObjectNode);
-                                queryManager.getPointsToGraph().addPointsToFact(
+                                queryManager.addPointsToFact(
                                         initialQuery.stmt().getNode(),
                                         initialQuery.fact(), objAlloc
                                 );
@@ -85,7 +85,7 @@ public class BackwardMerlinSolver extends MerlinSolver {
                                 node.fact() instanceof Register register) {
                             if (constantNode.getResultRegister() == register.getId()) {
                                 ConstantAllocation constantAllocation = new ConstantAllocation(constantNode);
-                                queryManager.getPointsToGraph().addPointsToFact(
+                                queryManager.addPointsToFact(
                                         initialQuery.stmt().getNode(),
                                         initialQuery.fact(),
                                         constantAllocation
@@ -95,7 +95,7 @@ public class BackwardMerlinSolver extends MerlinSolver {
                             if (node.fact() instanceof Register register) {
                                 if (funcNode.getResultRegister() == register.getId()) {
                                     FunctionAllocation functionAllocation = new FunctionAllocation(funcNode);
-                                    queryManager.getPointsToGraph().addPointsToFact(
+                                    queryManager.addPointsToFact(
                                             initialQuery.stmt().getNode(),
                                             initialQuery.fact(),
                                             functionAllocation
@@ -105,7 +105,7 @@ public class BackwardMerlinSolver extends MerlinSolver {
                                 if (Objects.nonNull(funcNode.getFunction().getName()) &&
                                         funcNode.getFunction().getName().equals(var.getVarName())) {
                                     FunctionAllocation functionAllocation = new FunctionAllocation(funcNode);
-                                    queryManager.getPointsToGraph().addPointsToFact(
+                                    queryManager.addPointsToFact(
                                             initialQuery.stmt().getNode(),
                                             initialQuery.fact(),
                                             functionAllocation
@@ -233,8 +233,8 @@ public class BackwardMerlinSolver extends MerlinSolver {
     }
 
     @Override
-    public QueryID getQueryID(Node<NodeState, Value> subQuery, boolean isSubQueryForward, boolean inUnbalancedPopListener) {
-        return new QueryID(new Query(initialQuery, false), new Query(subQuery, isSubQueryForward), inUnbalancedPopListener);
+    public QueryID getQueryID(Node<NodeState, Value> subQuery, boolean isSubQueryForward, boolean inUnbalancedPopListener, boolean resolvesAliasing) {
+        return new StandardQueryID(new Query(initialQuery, false), new Query(subQuery, isSubQueryForward), inUnbalancedPopListener, resolvesAliasing);
     }
 
     @Override

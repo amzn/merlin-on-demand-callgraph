@@ -74,7 +74,7 @@ public class NodeState implements Location {
 
     @Override
     public String toString() {
-        return node.toString();
+        return node.toString() + "@" + node.getBlock().getFunction();
     }
 
     /**

@@ -68,6 +68,12 @@ public class Variable extends Value {
         return !Objects.isNull(current);
     }
 
+    public boolean capturedIn(Function function) {
+        return isVisibleIn(function);
+        // TODO: implement properly and only return true if variable
+        // occurs in body of function
+    }
+
     @Override
     public String toString() {
         return "'" + scope + "." + varName + "'";

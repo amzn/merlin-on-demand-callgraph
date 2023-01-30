@@ -19,6 +19,7 @@ import com.amazon.pvar.tspoc.merlin.ir.*;
 import com.amazon.pvar.tspoc.merlin.solver.*;
 import dk.brics.tajs.flowgraph.FlowGraph;
 import dk.brics.tajs.flowgraph.jsnodes.*;
+import dk.brics.tajs.util.Collectors;
 import org.apache.log4j.Level;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -28,7 +29,7 @@ import java.util.Collection;
 
 public class InterproceduralPointsToTests extends AbstractCallGraphTest {
 
-    public void printPointsTo(
+    public static void printPointsTo(
             Value queryVal,
             dk.brics.tajs.flowgraph.jsnodes.Node queryNode,
             Collection<Allocation> pts
@@ -39,7 +40,20 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest {
         System.out.println(pts);
     }
 
-    public void printCallGraph(CallGraph callGraph) {
+    private void printPointsToLocations(
+            Value queryVal,
+            dk.brics.tajs.flowgraph.jsnodes.Node queryNode,
+            Collection<PointsToGraph.PointsToLocation> pts
+    ) {
+        System.out.println("Values pointing to " + queryVal + " @ " + queryNode);
+        final var groupedByVal = pts.stream().collect(Collectors.groupingBy(PointsToGraph.PointsToLocation::getValue));
+        groupedByVal.forEach((value, ptls) -> {
+            System.out.println(value + ":");
+            ptls.forEach(ptl -> System.out.println("\t@" + ptl.getLocation()));
+        });
+    }
+
+    public static void printCallGraph(CallGraph callGraph) {
         System.out.println("Known call graph:");
         System.out.println(callGraph);
     }
@@ -478,7 +492,6 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest {
         printPointsTo(queryVal2, queryNode, pts2);
         System.out.println();
         printCallGraph(solver2.getCallGraph());
-
         assert pts1.contains(new ObjectAllocation(((NewObjectNode) getNodeByIndex(12, flowGraph))));
 
         assert pts2.contains(new ObjectAllocation(((NewObjectNode) getNodeByIndex(18, flowGraph))));
@@ -571,6 +584,7 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest {
 
     @Test
     public void interproceduralPropReadWrite() {
+        org.apache.log4j.Logger.getRootLogger().setLevel(org.apache.log4j.Level.DEBUG);
         FlowGraph flowGraph =
                 initializeFlowgraph("src/test/resources/js/callgraph/interprocedural-tests/interproceduralPropReadWrite.js");
         dk.brics.tajs.flowgraph.jsnodes.Node queryNode = getNodeByIndex(22, flowGraph);
@@ -587,6 +601,56 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest {
         printPointsTo(queryVal, queryNode, pts);
         assert pts.contains(new ObjectAllocation(((NewObjectNode) getNodeByIndex(13, flowGraph))));
         assert pts.size() == 1;
+    }
+
+    @Test
+    public void intraproceduralAliasing() {
+        final var flowGraph = initializeFlowgraph("src/test/resources/js/callgraph/interprocedural-tests/intraproceduralAliasing.js");
+        final var queryNode = (NewObjectNode) FlowgraphUtils.allNodesInFunction(flowGraph.getMain())
+                .filter(node -> node instanceof NewObjectNode)
+                .findFirst()
+                .get();
+        Value queryVal = new ObjectAllocation(queryNode);
+        final var initialQuery = new Node<>(
+                new NodeState(queryNode),
+                queryVal
+        );
+        final var queryManager = new QueryManager();
+        queryManager.getOrStartForwardQuery(initialQuery);
+        final var pointsToLocations = queryManager.getPointsToGraph().getKnownValuesPointingTo((Allocation)queryVal).toJavaSet();
+        final var aliasedLocation = new PointsToGraph.PointsToLocation(
+                (dk.brics.tajs.flowgraph.jsnodes.Node) flowGraph.getMain().getOrdinaryExit().getLastNode(),
+                new Variable("readingY", flowGraph.getMain())
+        );
+        assert pointsToLocations.contains(aliasedLocation);
+    }
+
+    @Test
+    public void interproceduralAliasing() {
+        final var flowGraph = initializeFlowgraph("src/test/resources/js/callgraph/interprocedural-tests/interproceduralAliasing.js");
+        final var allocations =  FlowgraphUtils.allNodesInFunction(flowGraph.getMain())
+                .filter(node -> node instanceof NewObjectNode)
+                .toList();
+        final var queryNode = (NewObjectNode)allocations.get(0);
+        Value queryVal = new ObjectAllocation(queryNode);
+        final var initialQuery = new Node<>(
+                new NodeState(queryNode),
+                queryVal
+        );
+        final var queryManager = new QueryManager();
+        final var solver = queryManager.getOrStartForwardQuery(initialQuery);
+        solver.solve();
+        queryManager.scheduler().waitUntilDone();
+        final var pointsToLocations = queryManager.getPointsToGraph().getKnownValuesPointingTo((Allocation)queryVal).toJavaSet();
+        printPointsToLocations(queryVal, queryNode, pointsToLocations);
+        final var resultLocation = new PointsToGraph.PointsToLocation(
+                (dk.brics.tajs.flowgraph.jsnodes.Node) flowGraph.getMain().getOrdinaryExit().getLastNode(),
+                new Variable("readingFromX", flowGraph.getMain())
+        );
+        final var otherQueryNode = (NewObjectNode)allocations.get(1);
+        final Value baseValue = new ObjectAllocation(otherQueryNode);
+        printPointsToLocations(baseValue, otherQueryNode, queryManager.getPointsToGraph().getKnownValuesPointingTo((Allocation) baseValue).toJavaSet());
+        assert pointsToLocations.contains(resultLocation);
     }
 
     @Test

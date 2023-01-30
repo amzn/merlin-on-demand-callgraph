@@ -16,15 +16,16 @@
 package com.amazon.pvar.tspoc.merlin.solver.flowfunctions;
 
 import com.amazon.pvar.tspoc.merlin.DebugUtils;
-import com.amazon.pvar.tspoc.merlin.ir.Property;
-import com.amazon.pvar.tspoc.merlin.ir.Register;
-import com.amazon.pvar.tspoc.merlin.ir.Value;
-import com.amazon.pvar.tspoc.merlin.ir.Variable;
+import com.amazon.pvar.tspoc.merlin.ir.*;
 import com.amazon.pvar.tspoc.merlin.livecollections.LiveCollection;
 import com.amazon.pvar.tspoc.merlin.solver.MerlinSolver;
 import com.amazon.pvar.tspoc.merlin.solver.QueryManager;
 import dk.brics.tajs.flowgraph.Function;
 import dk.brics.tajs.flowgraph.jsnodes.*;
+import sync.pds.solver.SyncPDSSolver;
+import sync.pds.solver.nodes.NodeWithLocation;
+import sync.pds.solver.nodes.PopNode;
+import sync.pds.solver.nodes.PushNode;
 import wpds.interfaces.State;
 
 import java.util.*;
@@ -47,63 +48,58 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
      */
     @Override
     public void visit(BinaryOperatorNode n) {
-        Set<Value> killed = new HashSet<>();
-        killed.add(usedRegisters.computeIfAbsent(n.getResultRegister(), id -> new Register(id, n.getBlock().getFunction())));
-        usedRegisters.computeIfAbsent(n.getArg1Register(), id -> new Register(id, n.getBlock().getFunction()));
-        usedRegisters.computeIfAbsent(n.getArg2Register(), id -> new Register(id, n.getBlock().getFunction()));
-        killAt(n, killed);
+        final var resultReg = new Register(n.getResultRegister(), n.getBlock().getFunction());
+        if (!getQueryValue().equals(resultReg)) {
+            addNormalFlowToPreds(n);
+        }
     }
 
     /**
-     * Update the register map with registers discovered at this node and propagate the value
+     * Update the register map with registers discovered at this node and propagate
+     * the value
      *
      * @param n
      */
     @Override
     public void visit(CallNode n) {
-        java.util.function.Function<Integer, Register> newRegisterLambda =
-                id -> new Register(id, n.getBlock().getFunction());
-        usedRegisters.computeIfAbsent(n.getResultRegister(), newRegisterLambda);
-        usedRegisters.computeIfAbsent(n.getFunctionRegister(), newRegisterLambda);
-        usedRegisters.computeIfAbsent(n.getBaseRegister(), newRegisterLambda);
-        int numArgs = n.getNumberOfArgs();
-        for (int i = 0; i < numArgs; i++) {
-            usedRegisters.computeIfAbsent(n.getArgRegister(i), newRegisterLambda);
-        }
-
         // propagate across the call site
-        Set<Value> killed = new HashSet<>();
-        killed.add(usedRegisters.get(n.getResultRegister()));
-        killAt(n, killed);
+        final var resultReg = new Register(n.getResultRegister(), n.getBlock().getFunction());
+        if (!resultReg.equals(getQueryValue())) {
+            addNormalFlowToPreds(n);
+        }
 
         // If this is a call to an internal TAJS function, don't try to resolve it
         if (Objects.nonNull(n.getTajsFunctionName())) {
             return;
         }
 
-        // propagate the assigned value to the return value of possibly invoked functions, if necessary
+        // propagate the assigned value to the return value of possibly invoked
+        // functions, if necessary
 
-        if (getQueryValue().equals(usedRegisters.get(n.getResultRegister()))) {
+        if (getQueryValue().equals(resultReg) ||
+            getQueryValue() instanceof ObjectAllocation) {
             final var targetFunctions = resolveFunctionCall(n);
             final var currentSPDSNode = currentPDSNode;
+            final var queryValue = getQueryValue();
             if (containingSolver != null) {
                 final var queryID = containingSolver.getQueryID(currentSPDSNode, false, false);
                 continueWithSubqueryResult(targetFunctions, queryID, (targetFunction) -> {
                     DebugUtils.debug("Discovered new callee for " + n + ": " + targetFunction);
                     final var returnNode = ((Node) targetFunction.getOrdinaryExit().getLastNode());
-                    final var returnReg = new Register(1, targetFunction);
-                    final var nextState = callPushState(returnNode, returnReg, n);
+                    final var valueToPropagateTo = (queryValue instanceof ObjectAllocation) ? queryValue
+                            : new Register(1, targetFunction);
+                    final var nextState = callPushState(returnNode, valueToPropagateTo, n);
                     DebugUtils.debug("Propagating to callee: " + nextState + " for node: " + currentSPDSNode);
                     containingSolver.propagate(currentSPDSNode, nextState);
                     DebugUtils.debug("Done propagating to callee");
                 });
             }
-            usedRegisters.clear();
         }
     }
 
     /**
      * TODO: Exceptional flow is not currently tracked
+     * 
      * @param n
      */
     @Override
@@ -112,25 +108,29 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     /**
-     * Add the result register to the map of known registers and kill flow, unless the constant node denotes the start
-     * of the current procedure. If we are at the start of the procedure, handle the interprocedural flow.
+     * Add the result register to the map of known registers and kill flow, unless
+     * the constant node denotes the start
+     * of the current procedure. If we are at the start of the procedure, handle the
+     * interprocedural flow.
      *
      * @param n
      */
     @Override
     public void visit(ConstantNode n) {
-        if (n.getResultRegister() == 1 && getQueryValue() instanceof Variable queryVar) {
-            handleflowToFunctionEntry(n, queryVar);
+        if (n.getResultRegister() == 1 && (getQueryValue() instanceof Variable ||
+                getQueryValue() instanceof ObjectAllocation)) {
+            handleflowToFunctionEntry(n, getQueryValue());
         }
 
-        Set<Value> killed = new HashSet<>();
-        killed.add(usedRegisters.computeIfAbsent(n.getResultRegister(), id -> new Register(id, n.getBlock().getFunction())));
-        killAt(n, killed);
-        usedRegisters.remove(n.getResultRegister());
+        final var resultReg = new Register(n.getResultRegister(), n.getBlock().getFunction());
+        if (!getQueryValue().equals(resultReg)) {
+            addNormalFlowToPreds(n);
+        }
     }
 
     /**
      * TODO
+     * 
      * @param n
      */
     @Override
@@ -140,17 +140,18 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
 
     /**
      * Merlin does not handle "with" statements, but does flag this unsoundness
+     * 
      * @param n
      */
     @Override
     public void visit(BeginWithNode n) {
-        usedRegisters.computeIfAbsent(n.getObjectRegister(), id -> new Register(id, n.getBlock().getFunction()));
         treatAsNop(n);
         logUnsoundness(n);
     }
 
     /**
      * TODO: Exceptional flow is not currently tracked
+     * 
      * @param n
      */
     @Override
@@ -159,7 +160,8 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     /**
-     * If this is a top-level function declaration (i.e. we are in main and the function declaration does not
+     * If this is a top-level function declaration (i.e. we are in main and the
+     * function declaration does not
      * assign to a register), kill flow at the function variable.
      *
      * Otherwise, kill flow of the result register at the newly created function
@@ -170,25 +172,26 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
     public void visit(DeclareFunctionNode n) {
         Set<Value> killed = new HashSet<>();
 
-        // If a function declaration does not assign to a register, the result register is -1
+        // If a function declaration does not assign to a register, the result register
+        // is -1
         if (n.getResultRegister() == -1) {
             Variable newVar = new Variable(
                     n.getFunction().getName(),
-                    getDeclaringScope(n.getFunction().getName(), n.getBlock().getFunction())
-            );
-            declaredVariables.add(newVar);
-            killed.add(newVar);
-            killAt(n, killed);
-            declaredVariables.remove(newVar);
+                    getDeclaringScope(n.getFunction().getName(), n.getBlock().getFunction()));
+            if (!getQueryValue().equals(newVar)) {
+                addNormalFlowToPreds(n);
+            }
         } else {
-            killed.add(usedRegisters.computeIfAbsent(n.getResultRegister(), id -> new Register(id, n.getBlock().getFunction())));
-            killAt(n, killed);
-            usedRegisters.remove(n.getResultRegister());
+            final var resultReg = new Register(n.getResultRegister(), n.getBlock().getFunction());
+            if (!getQueryValue().equals(resultReg)) {
+                addNormalFlowToPreds(n);
+            }
         }
     }
 
     /**
      * TODO
+     * 
      * @param n
      */
     @Override
@@ -197,19 +200,20 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     /**
-     * Add the condition register to the set of known registers and propagate all normal flows.  Note that branching
+     * Add the condition register to the set of known registers and propagate all
+     * normal flows. Note that branching
      * is handled by the predecessor relation.
      *
      * @param n
      */
     @Override
     public void visit(IfNode n) {
-        usedRegisters.computeIfAbsent(n.getConditionRegister(), id -> new Register(id, n.getBlock().getFunction()));
         treatAsNop(n);
     }
 
     /**
      * Merlin does not handle "with" statements, but does flag this unsoundness
+     * 
      * @param n
      */
     @Override
@@ -225,14 +229,15 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
      */
     @Override
     public void visit(NewObjectNode n) {
-        Set<Value> killed = new HashSet<>();
-        killed.add(usedRegisters.computeIfAbsent(n.getResultRegister(), id -> new Register(id, n.getBlock().getFunction())));
-        killAt(n, killed);
-        usedRegisters.remove(n.getResultRegister());
+        final var resultReg = new Register(n.getResultRegister(), n.getBlock().getFunction());
+        if (!getQueryValue().equals(resultReg)) {
+            addNormalFlowToPreds(n);
+        }
     }
 
     /**
      * TODO
+     * 
      * @param n
      */
     @Override
@@ -242,6 +247,7 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
 
     /**
      * TODO
+     * 
      * @param n
      */
     @Override
@@ -260,24 +266,37 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     /**
-     * Kills flow for the assigned value, adds a property push rule for the value read from the property, and
+     * Kills flow for the assigned value, adds a property push rule for the value
+     * read from the property, and
      * propagates all other values
+     * 
      * @param n
      */
     @Override
     public void visit(ReadPropertyNode n) {
-        Register result = usedRegisters
-                .compute(n.getResultRegister(), (id, r) -> new Register(id, n.getBlock().getFunction()));
-        Variable base = getBaseForReadPropertyNode(n);
-        usedRegisters.compute(n.getBaseRegister(), (id, r) -> new Register(id, n.getBlock().getFunction()));
+        final var result = new Register(n.getResultRegister(), n.getBlock().getFunction());
+        final var baseRegister = new Register(n.getBaseRegister(), n.getBlock().getFunction());
         if (n.isPropertyFixed()) {
             // Property is a fixed String
             Property property = new Property(n.getPropertyString());
-            Set<Value> killed = new HashSet<>();
-            killed.add(result);
-            killAt(n, killed);
+            if (!getQueryValue().equals(result)) {
+                addNormalFlowToPreds(n);
+            }
             if (getQueryValue().equals(result)) {
-                addPropPushState(n, base, property);
+                final var currentPDSNode = this.currentPDSNode;
+                withAllocationSitesOf(n, baseRegister, alloc -> {
+                    assert containingSolver != null;
+                    getPredecessors(n)
+                            .forEach(pred -> {
+                                final var pushNode = new PushNode<>(
+                                        makeNodeState(pred),
+                                        alloc,
+                                        property,
+                                        SyncPDSSolver.PDSSystem.FIELDS
+                                );
+                                containingSolver.propagate(currentPDSNode, pushNode);
+                            });
+                }, queryValue);
             }
         } else {
             // TODO: dispatch a backward query on the register used for the property read
@@ -286,25 +305,24 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     /**
-     * Propagate data from the result register to the read variable, killing the variable's previous flow
+     * Propagate data from the result register to the read variable, killing the
+     * variable's previous flow
      *
      * @param n
      */
     @Override
     public void visit(ReadVariableNode n) {
         Set<Value> killed = new HashSet<>();
-        Register resultReg = usedRegisters
-                .computeIfAbsent(n.getResultRegister(), id -> new Register(id, n.getBlock().getFunction()));
-        Register baseReg = usedRegisters
-                .computeIfAbsent(n.getResultBaseRegister(), id -> new Register(id, n.getBlock().getFunction()));
+        Register resultReg = new Register(n.getResultRegister(), n.getBlock().getFunction());
+        Register baseReg = new Register(n.getResultBaseRegister(), n.getBlock().getFunction());
         Variable read = new Variable(
                 n.getVariableName(),
-                getDeclaringScope(n.getVariableName(), n.getBlock().getFunction())
-        );
-        declaredVariables.add(read);
+                getDeclaringScope(n.getVariableName(), n.getBlock().getFunction()));
         killed.add(resultReg);
         killed.add(baseReg);
-        killAt(n, killed);
+        if (!killed.contains(getQueryValue())) {
+            addNormalFlowToPreds(n);
+        }
 
         // Add register -> variable flow if necessary
         if (getQueryValue().equals(resultReg)) {
@@ -315,8 +333,10 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     /**
-     * The backward flow function across a return node is essentially the same as a nop node:
+     * The backward flow function across a return node is essentially the same as a
+     * nop node:
      * all known values in the scope are propagated across with normal flow.
+     * 
      * @param n
      */
     @Override
@@ -326,6 +346,7 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
 
     /**
      * TODO: Exceptional flow is not currently tracked
+     * 
      * @param n
      */
     @Override
@@ -335,6 +356,7 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
 
     /**
      * TODO
+     * 
      * @param n
      */
     @Override
@@ -349,14 +371,15 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
      */
     @Override
     public void visit(UnaryOperatorNode n) {
-        Set<Value> killed = new HashSet<>();
-        killed.add(usedRegisters.computeIfAbsent(n.getResultRegister(), id -> new Register(id, n.getBlock().getFunction())));
-        usedRegisters.computeIfAbsent(n.getArgRegister(), id -> new Register(id, n.getBlock().getFunction()));
-        killAt(n, killed);
+        final var resultReg = new Register(n.getResultRegister(), n.getBlock().getFunction());
+        if (!getQueryValue().equals(resultReg)) {
+            addNormalFlowToPreds(n);
+        }
     }
 
     /**
      * TODO
+     * 
      * @param n
      */
     @Override
@@ -365,23 +388,38 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     /**
-     * Adds a property pop rule for the value written to the property, and propagates all other values
+     * Adds a property pop rule for the value written to the property, and
+     * propagates all other values
+     * 
      * @param n
      */
     @Override
     public void visit(WritePropertyNode n) {
-        Value val = getValForWritePropertyNode(n);
-        usedRegisters.compute(n.getValueRegister(), (id, r) -> new Register(id, n.getBlock().getFunction()));
-        Variable base = getBaseForWritePropertyNode(n);
-        usedRegisters.compute(n.getBaseRegister(), (id, r) -> new Register(id, n.getBlock().getFunction()));
+        final var valueRegister = new Register(n.getValueRegister(), n.getBlock().getFunction());
+        final var baseRegister = new Register(n.getBaseRegister(), n.getBlock().getFunction());
         if (n.isPropertyFixed()) {
             // Property is a fixed String
             Property property = new Property(n.getPropertyString());
-            treatAsNop(n);
-
-            if (getQueryValue().equals(base)) {
-                addPropPopState(n, val, property);
-            }
+            treatAsNop(n); // adds normal flows for things not affected by heap write.
+            final var queryValue = getQueryValue();
+            withAllocationSitesOf(n, baseRegister, alloc -> {
+                if (queryValue.equals(alloc)) {
+                    getPredecessors(n)
+                            .forEach(pred -> {
+                                final var popNode = new PopNode<>(
+                                        new NodeWithLocation<>(
+                                                makeNodeState(pred),
+                                                valueRegister,
+                                                property
+                                        ),
+                                        SyncPDSSolver.PDSSystem.FIELDS
+                                );
+                                assert containingSolver != null;
+                                final var sourceNode = new sync.pds.solver.nodes.Node<>(makeNodeState(n), (Value)alloc);
+                                containingSolver.propagate(sourceNode, popNode);
+                            });
+                }
+            }, queryValue);
         } else {
             // TODO: dispatch a backward query on the register used for the property read
             treatAsNop(n);
@@ -389,23 +427,20 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     /**
-     * Propagate data from the written variable to the argument register, killing the register's previous flow.
+     * Propagate data from the written variable to the argument register, killing
+     * the register's previous flow.
      *
      * @param n
      */
     @Override
     public void visit(WriteVariableNode n) {
-        Set<Value> killed = new HashSet<>();
-        Register argRegister = usedRegisters
-                .computeIfAbsent(n.getValueRegister(), id -> new Register(id, n.getBlock().getFunction()));
+        Register argRegister = new Register(n.getValueRegister(), n.getBlock().getFunction());
         Variable write = new Variable(
                 n.getVariableName(),
-                getDeclaringScope(n.getVariableName(), n.getBlock().getFunction())
-        );
-        declaredVariables.add(write);
-        killed.add(write);
-        killAt(n, killed);
-
+                getDeclaringScope(n.getVariableName(), n.getBlock().getFunction()));
+        if (!getQueryValue().equals(write)) {
+            addNormalFlowToPreds(n);
+        }
         // Add register -> variable flow if necessary
         if (getQueryValue().equals(write)) {
             genSingleNormalFlow(n, argRegister);
@@ -425,6 +460,7 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
 
     /**
      * TODO
+     * 
      * @param n
      */
     @Override
@@ -433,7 +469,9 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     /**
-     * No need to do anything special to handle begin loop nodes for backward analysis.
+     * No need to do anything special to handle begin loop nodes for backward
+     * analysis.
+     * 
      * @param n
      */
     @Override
@@ -442,7 +480,9 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     /**
-     * No need to do anything special to handle end loop nodes for backward analysis.
+     * No need to do anything special to handle end loop nodes for backward
+     * analysis.
+     * 
      * @param n
      */
     @Override
@@ -450,21 +490,14 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
         treatAsNop(n);
     }
 
-
     @Override
     protected synchronized void treatAsNop(Node n) {
         getPredecessors(n).forEach(this::addStandardNormalFlow);
     }
 
-    /**
-     * Propagate dataflow across Node n, killing flow at the specified values
-     *  @param n
-     * @param killed
-     */
-    @Override
-    protected synchronized void killAt(Node n, Set<Value> killed) {
+    private void addNormalFlowToPreds(Node n) {
         getPredecessors(n)
-                .forEach(predecessor -> addStandardNormalFlow(predecessor, killed));
+                .forEach(this::addStandardNormalFlow);
     }
 
     protected synchronized void genSingleNormalFlow(Node n, Value v) {
@@ -472,75 +505,81 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
                 .forEach(predecessor -> addSingleState(predecessor, v));
     }
 
-    private synchronized void handleflowToFunctionEntry(ConstantNode entryNode, Variable queryVar) {
-        DebugUtils.debug("Handling flow to entry of " + entryNode.getBlock().getFunction() + " looking backwards for " + queryVar);
+    private synchronized void handleflowToFunctionEntry(ConstantNode entryNode, Value queryVal) {
+        DebugUtils.debug("Handling flow to entry of " + entryNode.getBlock().getFunction() + " looking backwards for "
+                + queryVal);
         Function containingFunction = entryNode.getBlock().getFunction();
         if (containingFunction.isMain()) {
             return;
         }
-        usedRegisters.clear();
-        Optional<String> paramName = containingFunction.getParameterNames().stream()
-                .filter(name -> name.equals(queryVar.getVarName()))
-                .findFirst();
-        // Launch a forward query on the containing function to find possible invocations
-        LiveCollection<CallNode> liveInvokes = findInvocationsOfFunction(containingFunction);
-        final var currentSPDSNode = currentPDSNode;
-        if (paramName.isPresent()) {
-            // continue the backward query from the argument passed to the invocation
-            int paramIndex = containingFunction.getParameterNames().indexOf(paramName.get());
-            if (containingSolver != null) {
-                final var queryID = containingSolver.getQueryID(currentSPDSNode, true, false);
+        if (containingSolver != null) {
+            final var queryID = containingSolver.getQueryID(currentPDSNode, true, false);
+            LiveCollection<CallNode> liveInvokes = findInvocationsOfFunction(containingFunction);
+            final var currentSPDSNode = currentPDSNode;
+            if (queryVal instanceof Variable queryVar) {
+                Optional<String> paramName = containingFunction.getParameterNames().stream()
+                        .filter(name -> name.equals(queryVar.getVarName()))
+                        .findFirst();
+                // Launch a forward query on the containing function to find possible
+                // invocations
+                if (paramName.isPresent()) {
+                    // continue the backward query from the argument passed to the invocation
+                    int paramIndex = containingFunction.getParameterNames().indexOf(paramName.get());
+                    // If queryVal is parameter name, go back to invocation site
+                    continueWithSubqueryResult(liveInvokes, queryID, invoke -> {
+                        DebugUtils.debug("handleflowToFunctionEntry[param]: found invocation of " + containingFunction +
+                                ": " + invoke + " for query: " + queryVal);
+                        try {
+                            Register reg = new Register(invoke.getArgRegister(paramIndex), invoke.getBlock().getFunction());
+                            State nextState = makeSPDSNode(invoke, reg);
+                            DebugUtils.debug("Propagating pop state: " + nextState + " where initialQuery=" +
+                                    containingSolver.initialQuery + " and currentSPDSNode: " + currentSPDSNode);
+                            containingSolver.propagate(currentSPDSNode, nextState);
+                            DebugUtils.debug("Done propagating: " + nextState);
+                        } catch (ArrayIndexOutOfBoundsException ignored) {
+                        }
+                    });
+                } else {
+                    continueWithSubqueryResult(liveInvokes, queryID, invoke -> {
+                        DebugUtils.debug("handleflowToFunctionEntry[non-param]: found invocation of " +
+                                containingFunction + ": " + invoke + " for query: " + queryVal);
+                        Function invokeScope = invoke.getBlock().getFunction();
+                        // otherwise, if queryVal is not visible at call site, it must have been captured in a closure
+                        // and we instead go back to the end of the defining function.
+                        if (!queryVar.isVisibleIn(invokeScope)) {
+                            Node outerScopeReturnNode = ((Node) containingFunction.getNode().getBlock().getFunction()
+                                    .getOrdinaryExit().getFirstNode());
+                            final var state = makeSPDSNode(outerScopeReturnNode, queryVar);
+                            containingSolver.propagate(currentSPDSNode, state);
+                        } else {
+                            final var popState = callPopState(invoke, queryVar);
+                            containingSolver.propagate(currentSPDSNode, popState);
+                        }
+                    });
+                }
+            } else if (queryVal instanceof ObjectAllocation alloc) {
+                /*
+                If our target query is on an object allocation (introduced via field reads/writes), then
+                we cannot determine whether the object allocation was reached through a call site or a variable
+                capture in the surrounding scope. In this case, we treat both as possible predecessors.
+                */
                 continueWithSubqueryResult(liveInvokes, queryID, invoke -> {
-                    DebugUtils.debug("handleflowToFunctionEntry[param]: found invocation of " + containingFunction +
-                            ": " + invoke + " for query: " + queryVar);
-                    try {
-                        Register reg = new Register(invoke.getArgRegister(paramIndex), invoke.getBlock().getFunction());
-                        State nextState = makeSPDSNode(invoke, reg);
-                        DebugUtils.debug("Propagating pop state: " + nextState + " where initialQuery=" +
-                                containingSolver.initialQuery + " and currentSPDSNode: " + currentSPDSNode);
-                        containingSolver.propagate(currentSPDSNode, nextState);
-                        DebugUtils.debug("Done propagating: " + nextState);
-                    } catch (ArrayIndexOutOfBoundsException ignored) {
-                    }
+                    final var nodeAtSurroundingScope = ((Node) containingFunction.getNode().getBlock().getFunction()
+                            .getOrdinaryExit().getFirstNode());
+                    final var stateAtSurroundingScope = this.makeSPDSNode(nodeAtSurroundingScope, queryVal);
+                    containingSolver.propagate(currentSPDSNode, stateAtSurroundingScope);
+                    final var stateAtCallSite = callPopState(invoke, queryVal);
+                    containingSolver.propagate(currentSPDSNode, stateAtCallSite);
                 });
-            }
-        } else {
-            if (containingSolver != null) {
-                final var queryID = containingSolver.getQueryID(currentSPDSNode, true, false);
-                continueWithSubqueryResult(liveInvokes, queryID, invoke -> {
-                    DebugUtils.debug("handleflowToFunctionEntry[non-param]: found invocation of " +
-                            containingFunction + ": " + invoke + " for query: " + queryVar);
-                    Function invokeScope = invoke.getBlock().getFunction();
-                    if (!queryVar.isVisibleIn(invokeScope)) {
-                        Node outerScopeReturnNode =
-                                ((Node) containingFunction.getNode().getBlock().getFunction().getOrdinaryExit().getFirstNode());
-                        final var state = makeSPDSNode(outerScopeReturnNode, queryVar);
-                        containingSolver.propagate(currentSPDSNode, state);
-                    } else {
-                        final var popState = callPopState(invoke, queryVar);
-                        containingSolver.propagate(currentSPDSNode, popState);
-                    }
-                });
+            } else {
+                throw new RuntimeException("BUG: Unexpected query value at function entry: " + queryVal);
             }
         }
     }
 
-    private synchronized void addPropPushState(Node n, Value base, Property property) {
-        getPredecessors(n).forEach(pred -> {
-            addSinglePropPushState(pred, base, property);
-        });
-    }
-
-    private synchronized void addPropPopState(Node n, Value val, Property property) {
-        getPredecessors(n).forEach(pred -> {
-            addSinglePropPopState(pred, val, property);
-        });
-    }
-
-    private BackwardFlowFunctions(MerlinSolver containingSolver, QueryManager queryManager, FlowFunctionState savedState) {
+    private BackwardFlowFunctions(MerlinSolver containingSolver, QueryManager queryManager,
+            FlowFunctionState savedState) {
         super(containingSolver, queryManager);
-        this.usedRegisters = new HashMap<>(savedState.usedRegisters());
-        this.declaredVariables = new HashSet<>(savedState.declaredVariables());
         this.queryValue = savedState.queryValue();
         this.currentPDSNode = savedState.pdsNode();
     }

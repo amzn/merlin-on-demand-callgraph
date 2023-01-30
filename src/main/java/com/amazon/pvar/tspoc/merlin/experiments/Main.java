@@ -64,6 +64,26 @@ public class Main {
         return config;
     }
 
+    /**
+     * Helper function to extract a flowgraph from a given file without babel transpilation.
+     * */
+    public static synchronized FlowGraph flowgraphWithoutBabel(String jsFile, boolean debugFlag) {
+        // TODO: reduce duplication in `flowgraphForProgram`
+        final var analysis = dk.brics.tajs.Main.init(new String[] { jsFile }, null);
+        final var flowGraph = analysis.getSolver().getFlowGraph();
+        if (debugFlag) {
+            final var flowgraphFile = jsFile + ".flowgraph";
+            try {
+                Files.writeString(Paths.get(flowgraphFile), flowGraph.toString());
+                System.err.println("Flowgraph written to " + flowgraphFile);
+            } catch (IOException e) {
+                System.err.println("Failed to write flowgraph to file: " + flowgraphFile);
+            }
+        }
+        return flowGraph;
+    }
+
+
     public static synchronized FlowGraph flowGraphForProgram(String jsFileRel, boolean debugFlag) {
 
         Path merlinRootDir = Paths.get(".").toAbsolutePath().normalize(); // pwd should be the root, merlin-on-demand-callgraph directory
@@ -84,6 +104,15 @@ public class Main {
         String[] inputs = { jsFile.toAbsolutePath().toString(), "-babel", "-config", tajsConfigFileStr };
         final var analysis = dk.brics.tajs.Main.init(inputs, null);
         final var flowGraph = analysis.getSolver().getFlowGraph();
+        if (debugFlag) {
+            final var flowgraphFile = jsFile + ".flowgraph";
+            try {
+                Files.writeString(Paths.get(flowgraphFile), flowGraph.toString());
+                System.err.println("Flowgraph written to " + flowgraphFile);
+            } catch (IOException e) {
+                System.err.println("Failed to write flowgraph to file: " + flowgraphFile);
+            }
+        }
         return flowGraph;
     }
 
@@ -142,6 +171,11 @@ public class Main {
         FlowGraph flowGraph = flowGraphForProgram(jsFile, debugFlag);
         Set<Node<NodeState, Value>> taintQueries = ExperimentUtils.getTaintQueries(flowGraph);
         int count = taintQueries.size();
+        if (count == 0) {
+            System.err.println("No queries detected for " + jsFile);
+            System.exit(1);
+        }
+        ExperimentUtils.Statistics.incrementTotalFiles();
         if (count > ExperimentUtils.Statistics.getMaxQueries()) {
             ExperimentUtils.Statistics.setMaxQueries(count);
         }
@@ -181,9 +215,10 @@ public class Main {
         ExperimentUtils.Statistics.incrementCGEdgesFound(cg.size());
         try {
             outputWriter.write("CG for program:\n");
-            outputWriter.write(cg.toString() + "\n");
+            outputWriter.write(cg + "\n");
             outputWriter.write("Total elapsed time: " + timer.getTotalElapsed() + "ms\n");
             outputWriter.write("Mean query time: " + timer.getTotalElapsed() / count + "ms\n\n");
+            System.out.println(cg.toJSON());
         } catch (IOException e) {
             e.printStackTrace();
         }
