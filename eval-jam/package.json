@@ -30,7 +30,7 @@
     "lodash": "^4.17.15",
     "request": "^2.88.2",
     "semver": "^7.3.2",
-    "simple-git": "^2.12.0",
+    "simple-git": "^3.5.0",
     "source-map-support": "^0.5.19",
     "table": "^5.4.6",
     "tmp": "^0.2.1",
