@@ -206,6 +206,10 @@ public class ExperimentUtils {
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
+        if (SINKS.isEmpty()) {
+            System.err.println("Failed to read any sinks");
+            System.exit(1);
+        }
     }
 
     public static class Timer<T> {

@@ -67,7 +67,7 @@ public class ForwardMerlinSolver extends MerlinSolver {
                             return;
                         }
                         Node<NodeState, Value> node = transition.getStart().fact();
-                        queryManager.getPointsToGraph().addPointsToFact(
+                        queryManager.addPointsToFact(
                                 node.stmt().getNode(),
                                 node.fact(),
                                 ((Allocation) initialQuery.fact())
@@ -110,7 +110,8 @@ public class ForwardMerlinSolver extends MerlinSolver {
                         Value targetVal = transition.getTarget().fact();
                         // If the transition target is the same as the initial query value, the analysis should continue
                         // past the unbalanced pop because the value flows past the return stmt of the current function
-                        if (targetVal.equals(ForwardMerlinSolver.this.initialQuery.fact())) {
+                        final var shouldContinue = targetVal.equals(ForwardMerlinSolver.this.initialQuery.fact());
+                        if (shouldContinue) {
                             final var targetFunc = transition.getLabel().getNode().getBlock().getFunction();
                             final var callSites = getFlowFunctions().findInvocationsOfFunction(targetFunc);
                             final var queryID = getQueryID(curr, true, true);
@@ -162,8 +163,8 @@ public class ForwardMerlinSolver extends MerlinSolver {
     }
 
     @Override
-    public QueryID getQueryID(Node<NodeState, Value> subQuery, boolean isSubQueryForward, boolean inUnbalancedPopListener) {
-        return new QueryID(new Query(initialQuery, true), new Query(subQuery, isSubQueryForward), inUnbalancedPopListener);
+    public QueryID getQueryID(Node<NodeState, Value> subQuery, boolean isSubQueryForward, boolean inUnbalancedPopListener, boolean resolvesAliasing) {
+        return new StandardQueryID(new Query(initialQuery, true), new Query(subQuery, isSubQueryForward), inUnbalancedPopListener, resolvesAliasing);
     }
 
     @Override

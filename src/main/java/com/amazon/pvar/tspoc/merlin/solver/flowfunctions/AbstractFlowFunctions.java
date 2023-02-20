@@ -20,13 +20,12 @@ import com.amazon.pvar.tspoc.merlin.ir.*;
 import com.amazon.pvar.tspoc.merlin.livecollections.LiveCollection;
 import com.amazon.pvar.tspoc.merlin.livecollections.LiveSet;
 import com.amazon.pvar.tspoc.merlin.livecollections.TaggedHandler;
-import com.amazon.pvar.tspoc.merlin.solver.MerlinSolver;
-import com.amazon.pvar.tspoc.merlin.solver.QueryID;
-import com.amazon.pvar.tspoc.merlin.solver.QueryManager;
+import com.amazon.pvar.tspoc.merlin.solver.*;
 import dk.brics.tajs.flowgraph.AbstractNode;
 import dk.brics.tajs.flowgraph.Function;
 import dk.brics.tajs.flowgraph.jsnodes.*;
 import dk.brics.tajs.js2flowgraph.FlowGraphBuilder;
+import dk.brics.tajs.util.Pair;
 import sync.pds.solver.SyncPDSSolver;
 import sync.pds.solver.nodes.CallPopNode;
 import sync.pds.solver.nodes.NodeWithLocation;
@@ -53,8 +52,6 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
      * Store node predecessor maps for each function as needed to avoid duplicating computation
      */
     private final Map<Function, Map<AbstractNode, Set<AbstractNode>>> predecessorMapCache = Collections.synchronizedMap(new HashMap<>());
-    protected Set<Variable> declaredVariables = new HashSet<>();
-    protected Map<Integer, Register> usedRegisters = new HashMap<>();
 
     protected sync.pds.solver.nodes.Node<NodeState, Value> currentPDSNode;
 
@@ -144,14 +141,9 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
      * @param node
      * @return
      */
-    public synchronized Set<State> computeNextStates(Node node, Value val) {
+    public final synchronized Set<State> computeNextStates(Node node, Value val) {
         queryValue = val;
         nextStates = new HashSet<>();
-        if (val instanceof Register register) {
-            usedRegisters.put(register.getId(), register);
-        } else if (val instanceof Variable variable) {
-            declaredVariables.add(variable);
-        }
         final var directionLabel = (this instanceof BackwardFlowFunctions) ? "bwd" : "fwd";
         final var lineNum = (node.getSourceLocation() != null)
                 ? "L" + node.getSourceLocation().getLineNumber()
@@ -165,30 +157,11 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
     }
 
     protected synchronized void addStandardNormalFlow(Node next, Set<Value> killedValues) {
-        declaredVariables.forEach(var -> {
-            if (!killedValues.contains(var) && var.equals(queryValue)) {
-                addNextState(makeSPDSNode(next, var));
-            }
-        });
-        usedRegisters.values().forEach(register -> {
-            if (!killedValues.contains(register) && register.equals(queryValue)) {
-                addNextState(makeSPDSNode(next, register));
-            }
-        });
+        addNextState(makeSPDSNode(next, queryValue));
     }
 
     protected synchronized void addStandardNormalFlow(Node next) {
-        declaredVariables.forEach(var -> {
-            if (var.equals(queryValue)) {
-                addNextState(makeSPDSNode(next, var));
-            }
-        });
-
-        usedRegisters.values().forEach(register -> {
-            if (register.equals(queryValue)) {
-                addNextState(makeSPDSNode(next, register));
-            }
-        });
+        addNextState(makeSPDSNode(next, queryValue));
     }
 
     protected synchronized void addSingleState(Node n, Value v) {
@@ -272,8 +245,11 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
             }
             currentScope = currentScope.getOuterFunction();
         }
-        throw new RuntimeException("Cannot get declaring scope of variable '" + varName + "' in function '" +
-                usageScope + "': '" + varName + "' should not be visible in this scope.");
+        final var errMsg = "Cannot get declaring scope of variable '" + varName + "' in function '" +
+                usageScope + "': '" + varName + "' should not be visible in this scope.";
+        System.err.println(errMsg + "\nFalling back to containing function");
+        // throw new RuntimeException(errMsg);
+        return usageScope;
     }
 
     /**
@@ -303,20 +279,36 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
 
     protected abstract void genSingleNormalFlow(Node n, Value v);
 
-    protected abstract void killAt(Node n, Set<Value> killed);
 
     /**
      * Find call sites where the provided function may be called by issuing a new forward query on the function
      */
     public synchronized LiveCollection<CallNode> findInvocationsOfFunction(Function function) {
+        return findInvocationsOfFunctionWithQuery(function).getFirst();
+    }
+
+    public synchronized Pair<LiveCollection<CallNode>, Query> findInvocationsOfFunctionWithQuery(Function function) {
         DeclareFunctionNode functionDeclaration = function.getNode();
         FunctionAllocation alloc = new FunctionAllocation(functionDeclaration);
         sync.pds.solver.nodes.Node<NodeState, Value> initialQuery = new sync.pds.solver.nodes.Node<>(
                 new NodeState(functionDeclaration),
                 alloc
         );
+//        final Set<Query> queries = new HashSet<>();
         final var solver = queryManager.getOrStartForwardQuery(initialQuery);
-        return solver.getPointsToGraph().getKnownFunctionInvocations(alloc);
+        final var query = new Query(initialQuery, true);
+        var result = solver.getPointsToGraph().getKnownFunctionInvocations(alloc);
+//        queries.add(query);
+//        // We need to search by name and by register if present
+//        if (functionDeclaration.getResultRegister() != -1) {
+//            final var initialRegQuery = new sync.pds.solver.nodes.Node<>(
+//                    new NodeState(functionDeclaration),
+//                    new Register(functionDeclaration.getResultRegister(), functionDeclaration.getBlock().getFunction())
+//            );
+//            final var regSolver = queryManager.getOrStartForwardQuery(initialRegQuery);
+//            queries.
+//        }
+        return Pair.make(result, query);
     }
 
     /**
@@ -395,18 +387,15 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
      * @return
      */
     protected synchronized LiveCollection<Function> resolveFunctionCall(CallNode n) {
-        usedRegisters.computeIfAbsent(
-                n.getFunctionRegister(),
-                id -> new Register(id, n.getBlock().getFunction())
-        );
         LiveCollection<Allocation> predecessorUnion = new LiveSet<>(queryManager.scheduler());
+        final var funcReg = new Register(n.getFunctionRegister(), n.getBlock().getFunction());
         for (var predecessor : getPredecessors(n)) {
             sync.pds.solver.nodes.Node<NodeState, Value> initialQuery = new sync.pds.solver.nodes.Node<>(
                     new NodeState(predecessor),
-                    usedRegisters.get(n.getFunctionRegister())
+                    funcReg
             );
             final var solver = queryManager.getOrStartBackwardQuery(initialQuery);
-            predecessorUnion = solver.getPointsToGraph().getPointsToSet(predecessor, usedRegisters.get(n.getFunctionRegister()))
+            predecessorUnion = solver.getPointsToGraph().getPointsToSet(predecessor, funcReg)
                     .union(predecessorUnion);
         }
         return AbstractFlowFunctions.allocationsToFunctions(predecessorUnion);
@@ -429,8 +418,6 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
      * an example.
      */
     protected record FlowFunctionState(
-            Set<Variable> declaredVariables,
-            Map<Integer, Register> usedRegisters,
             Value queryValue,
             sync.pds.solver.nodes.Node<NodeState, Value> pdsNode) {
     }
@@ -441,12 +428,10 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
      */
     protected abstract AbstractFlowFunctions copyFromFlowFunctionState(FlowFunctionState state);
 
-    private FlowFunctionState copyFlowFunctionState() {
-        final var usedRegisterCopy = new HashMap<>(usedRegisters);
-        final var declaredVarsCopy = new HashSet<>(declaredVariables);
+    protected FlowFunctionState copyFlowFunctionState() {
         final var queryValue = getQueryValue();
         final var currentSPDSNode = currentPDSNode;
-        return new FlowFunctionState(declaredVarsCopy, usedRegisterCopy, queryValue, currentSPDSNode);
+        return new FlowFunctionState(queryValue, currentSPDSNode);
     }
 
     /**
@@ -475,4 +460,20 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
         }
     }
 
+    public final void withAllocationSitesOf(Node location, Value value, Consumer<Allocation> handler, Value originatingQueryValue) {
+        if (containingSolver != null) {
+            final var findBaseAllocsBackwards = new sync.pds.solver.nodes.Node<>(new NodeState(location), value);
+            queryManager.getOrStartBackwardQuery(findBaseAllocsBackwards);
+            final var basePointsToSet = queryManager.getPointsToGraph().getPointsToSet(location, value);
+            final var flowFunctionState = copyFlowFunctionState();
+            final QueryID bwdsID = new AliasQueryID(
+                    new Query(containingSolver.initialQuery, containingSolver instanceof ForwardMerlinSolver),
+                    new Query(findBaseAllocsBackwards, false),
+                    originatingQueryValue);
+            basePointsToSet.onAdd(TaggedHandler.create(bwdsID, alloc -> {
+                final var newFlowFunctions = copyFromFlowFunctionState(flowFunctionState);
+                containingSolver.withFlowFunctions(newFlowFunctions, () -> handler.accept(alloc));
+            }));
+        }
+    }
 }

@@ -35,7 +35,7 @@ public class FunctionAllocation extends Register implements Allocation {
     }
 
     @Override
-    public Node getAllocationStatement() {
+    public DeclareFunctionNode getAllocationStatement() {
         return allocationStatement;
     }
 

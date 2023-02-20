@@ -8,9 +8,4 @@ package com.amazon.pvar.tspoc.merlin.solver;
   *     can result in identical subqueries to those issued by other flow
   *     functions.
   */
-public record QueryID(
-    Query initialQuery,
-    Query subQuery,
-    boolean inUnbalancedPopListener
-) {}
-
+public interface QueryID {}

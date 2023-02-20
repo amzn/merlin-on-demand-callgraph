@@ -56,6 +56,13 @@ libraryDependencies += "org.slf4j" % "slf4j-simple" % "2.0.3" % Test
 // https://mvnrepository.com/artifact/com.google.code.gson/gson
 libraryDependencies += "com.google.code.gson" % "gson" % "2.10.1"
 
+// For visualizing automata
+// https://mvnrepository.com/artifact/org.jgrapht/jgrapht-core
+libraryDependencies += "org.jgrapht" % "jgrapht-core" % "1.5.1"
+// https://mvnrepository.com/artifact/org.jgrapht/jgrapht-io
+libraryDependencies += "org.jgrapht" % "jgrapht-io" % "1.5.1"
+// https://mvnrepository.com/artifact/org.jgrapht/jgrapht-ext
+libraryDependencies += "org.jgrapht" % "jgrapht-ext" % "1.5.1"
 
 Compile / run / mainClass := Some(
   "com.amazon.pvar.tspoc.merlin.experiments.Main"
