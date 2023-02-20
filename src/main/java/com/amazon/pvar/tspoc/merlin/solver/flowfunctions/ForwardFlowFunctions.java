@@ -58,7 +58,6 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
     @Override
     public void visit(BinaryOperatorNode n) {
         Set<Value> killed = new HashSet<>();
-//        usedRegisters.computeIfAbsent(n.getResultRegister(), id -> new Register(id, n.getBlock().getFunction()));
         final var arg1 = new Register(n.getArg1Register(), n.getBlock().getFunction());
         killed.add(arg1);
         final var arg2 = new Register(n.getArg2Register(), n.getBlock().getFunction());
@@ -89,39 +88,11 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
         }
 
         // Save current flow function state and capture it in closure:
-        final var currentSPDSNode = currentPDSNode;
         if (containingSolver != null) {
-            final var queryID = containingSolver.getQueryID(currentSPDSNode, false, false);
-            final int numArgs = n.getNumberOfArgs();
-            final var queryValue = getQueryValue();
-            continueWithSubqueryResult(resolveFunctionCall(n), queryID, targetFunction -> {
-                DebugUtils.debug(this.containingSolver.getQueryString() + "; New target function: " +
-                        targetFunction + " for query " + this.containingSolver.getQueryString() +
-                        " and query var " + queryValue + " for call node: " + n);
-                Node entryPoint = ((Node) targetFunction.getEntry().getFirstNode());
-                if ((queryValue instanceof Variable var && var.isVisibleIn(targetFunction)) ||
-                        (queryValue instanceof ObjectAllocation)) {
-                    final var nextState = callPushState(entryPoint, queryValue, n);
-                    containingSolver.propagate(currentSPDSNode, nextState);
-                } else {
-                    for (int i = 0; i < numArgs; i++) {
-                        Register argRegister = new Register(n.getArgRegister(i), n.getBlock().getFunction());
-                        try {
-                            String paramName = targetFunction.getParameterNames().get(i);
-                            Variable param = new Variable(paramName, targetFunction);
-                            if (queryValue.equals(argRegister)) {
-                                DebugUtils.debug("Propagating actual argument " + argRegister
-                                        + " to function parameter: " + param);
-                                final var nextState = callPushState(entryPoint, param, n);
-                                containingSolver.propagate(currentSPDSNode, nextState);
-                            }
-                        } catch (IndexOutOfBoundsException e) {
-                            // Do nothing, if we pass an extra unused arg to a function, there's no need to
-                            // propagate
-                        }
-                    }
-                }
-            });
+            final var queryID = containingSolver.getQueryID(currentPDSNode, false, false);
+            final var sourceState = currentPDSNode;
+            continueWithSubqueryResult(resolveFunctionCall(n), queryID,
+                    callee -> this.handleFlowToCallee(n, callee, sourceState));
         }
         // Propagate values across the call site
         treatAsNop(n);
@@ -194,19 +165,7 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
      */
     @Override
     public void visit(DeclareFunctionNode n) {
-        // Should be in WriteVariable code
-//        if (containingSolver != null && getQueryValue() instanceof final Variable var && var.capturedIn(n.getFunction())) {
-//            handleFlowToClosureVar(var, n);
-//        }
-        if (n.getResultRegister() == -1) {
-            // This function declaration was not assigned to a result register at creation
-            Variable functionVariable = new Variable(n.getFunction().getName(), n.getBlock().getFunction());
-            FunctionAllocation alloc = new FunctionAllocation(n);
-            if (getQueryValue().equals(alloc)) {
-                genSingleNormalFlow(n, functionVariable);
-            }
-            treatAsNop(n);
-        } else {
+        if (n.getResultRegister() != -1) {
             // This function declaration is a function expression, assigned to some result
             // register
             // A forward query to find invocations of functions starts from declare function nodes
@@ -216,6 +175,15 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
                     functionAllocation.getAllocationStatement().equals(n)) {
                 final var resultReg = new Register(n.getResultRegister(), n.getBlock().getFunction());
                 genSingleNormalFlow(n, resultReg);
+            }
+            treatAsNop(n);
+        }
+        final var functionName = n.getFunction().getName();
+        if (functionName != null && !functionName.isBlank()) {
+            Variable functionVariable = new Variable(n.getFunction().getName(), n.getBlock().getFunction());
+            FunctionAllocation alloc = new FunctionAllocation(n);
+            if (getQueryValue().equals(alloc)) {
+                genSingleNormalFlow(n, functionVariable);
             }
             treatAsNop(n);
         }
@@ -311,6 +279,9 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
             if (!getQueryValue().equals(result)) {
                 addStandardNormalFlowToNext(n);
             }
+            if (n.getResultRegister() == -1) {
+                return; // nothing more to do
+            }
             final var queryValue = getQueryValue();
             withAllocationSitesOf(n, baseReg, alloc -> {
                 assert containingSolver != null;
@@ -335,6 +306,39 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
         } else {
             // TODO: dispatch a backward query on the register used for the property read
             treatAsNop(n);
+        }
+    }
+
+    private void handleFlowToCallee(CallNode caller, Function callee, sync.pds.solver.nodes.Node<NodeState, Value> sourceState) {
+        assert containingSolver != null;
+        final int numArgs = caller.getNumberOfArgs();
+        final var queryValue = containingSolver.getFlowFunctions().getQueryValue();
+        DebugUtils.debug(this.containingSolver.getQueryString() + "; New target function: " +
+                callee + " for query " + this.containingSolver.getQueryString() +
+                " and query var " + queryValue + " for call node: " + caller);
+        Node entryPoint = ((Node) callee.getEntry().getFirstNode());
+        // HACK to ensure we use the original query value
+        if ((queryValue instanceof Variable var && var.isVisibleIn(callee)) ||
+                (queryValue instanceof ObjectAllocation)) {
+            final var nextState = callPushState(entryPoint, queryValue, caller);
+            containingSolver.propagate(sourceState, nextState);
+        } else {
+            for (int i = 0; i < numArgs; i++) {
+                Register argRegister = new Register(caller.getArgRegister(i), caller.getBlock().getFunction());
+                try {
+                    String paramName = callee.getParameterNames().get(i);
+                    Variable param = new Variable(paramName, callee);
+                    if (queryValue.equals(argRegister)) {
+                        DebugUtils.debug("Propagating actual argument " + argRegister
+                                + " to function parameter: " + param);
+                        final var nextState = callPushState(entryPoint, param, caller);
+                        containingSolver.propagate(currentPDSNode, nextState);
+                    }
+                } catch (IndexOutOfBoundsException e) {
+                    // Do nothing, if we pass an extra unused arg to a function, there's no need to
+                    // propagate
+                }
+            }
         }
     }
 

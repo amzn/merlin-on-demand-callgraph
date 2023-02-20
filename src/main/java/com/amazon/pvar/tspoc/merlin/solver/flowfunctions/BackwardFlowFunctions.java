@@ -95,6 +95,25 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
                 });
             }
         }
+
+        /* Special case: desugar method call resolution into field reads.
+        Note  that this logic should not really be handled in the flow function for CallNode, but in its predecessor,
+        since we only create `MethodCall` facts when resolving method calls backwards. However, since we
+        would have to remember to perform this logic for all other transfer functions, it seems less error-prone,
+        albeit confusing, to handle it here, as MethodCall facts are only introduced in resolveFunctionCall.
+        */
+        if (getQueryValue() instanceof MethodCall methodCall && containingSolver != null) {
+            final var syntheticReadResultRegister = AbstractFlowFunctions.syntheticRegisterForMethodCall(n);
+            // Add a flow from the synthetic result register into the method call at n
+            final sync.pds.solver.nodes.Node<NodeState, Value> syntheticRegisterState =
+                    new sync.pds.solver.nodes.Node<>(makeNodeState(n), syntheticReadResultRegister);
+            containingSolver.propagate(currentPDSNode, syntheticRegisterState);
+            final var baseRegister = new Register(
+                    methodCall.getCallNode().getBaseRegister(),
+                    methodCall.getCallNode().getBlock().getFunction()
+            );
+            handleFlowToFieldRead(n, baseRegister, new Property(methodCall.getCallNode().getPropertyString()), syntheticRegisterState);
+        }
     }
 
     /**
@@ -170,8 +189,6 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
      */
     @Override
     public void visit(DeclareFunctionNode n) {
-        Set<Value> killed = new HashSet<>();
-
         // If a function declaration does not assign to a register, the result register
         // is -1
         if (n.getResultRegister() == -1) {
@@ -283,25 +300,29 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
                 addNormalFlowToPreds(n);
             }
             if (getQueryValue().equals(result)) {
-                final var currentPDSNode = this.currentPDSNode;
-                withAllocationSitesOf(n, baseRegister, alloc -> {
-                    assert containingSolver != null;
-                    getPredecessors(n)
-                            .forEach(pred -> {
-                                final var pushNode = new PushNode<>(
-                                        makeNodeState(pred),
-                                        alloc,
-                                        property,
-                                        SyncPDSSolver.PDSSystem.FIELDS
-                                );
-                                containingSolver.propagate(currentPDSNode, pushNode);
-                            });
-                }, queryValue);
+                handleFlowToFieldRead(n, baseRegister, property, this.currentPDSNode);
             }
         } else {
             // TODO: dispatch a backward query on the register used for the property read
             treatAsNop(n);
         }
+    }
+
+    private void handleFlowToFieldRead(Node location, Register baseRegister, Property property,
+                                       sync.pds.solver.nodes.Node<NodeState, Value> sourceState) {
+        withAllocationSitesOf(location, baseRegister, alloc -> {
+            assert containingSolver != null;
+            getPredecessors(location)
+                    .forEach(pred -> {
+                        final var pushNode = new PushNode<>(
+                                makeNodeState(pred),
+                                alloc,
+                                property,
+                                SyncPDSSolver.PDSSystem.FIELDS
+                        );
+                        containingSolver.propagate(sourceState, pushNode);
+                    });
+        }, queryValue);
     }
 
     /**

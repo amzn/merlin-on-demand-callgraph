@@ -1,6 +1,6 @@
 package com.amazon.pvar.tspoc.merlin.solver
 
-import com.amazon.pvar.tspoc.merlin.ir.{Allocation, FunctionAllocation, NodeState, Register, Value}
+import com.amazon.pvar.tspoc.merlin.ir.{Allocation, FunctionAllocation, MethodCall, NodeState, Register, Value}
 import com.amazon.pvar.tspoc.merlin.livecollections.Scheduler
 import dk.brics.tajs.flowgraph.jsnodes.CallNode
 import sync.pds.solver.nodes.Node
@@ -78,14 +78,14 @@ class QueryManager() {
           reg.getId == callNode.getFunctionRegister &&
           reg.getContainingFunction == callNode.getBlock.getFunction =>
         this.getCallGraph.addEdge(callNode, functionAllocation.getAllocationStatement.getFunction)
+      case (callNode: CallNode, functionAllocation: FunctionAllocation, methodCall: MethodCall)
+        if callNode.equals(methodCall.getCallNode) =>
+        this.getCallGraph.addEdge(callNode, functionAllocation.getAllocationStatement.getFunction)
       case _ =>
     }
   }
 }
 
-/** Helper object to manage a single query manager via dynamic scoping rather
-  * than a singleton (simplifies testing)
-  */
 object QueryManager {
 
   type BackwardQuery = Node[NodeState, Value]

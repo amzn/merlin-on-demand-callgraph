@@ -8,4 +8,8 @@ public class DebugUtils {
     public static void debug(final String str) {
         logger.debug(str);
     }
+
+    public static void warn(final String str) {
+        logger.warn(str);
+    }
 }
