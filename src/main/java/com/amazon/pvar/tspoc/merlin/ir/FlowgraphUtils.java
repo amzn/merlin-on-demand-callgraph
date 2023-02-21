@@ -28,7 +28,7 @@ public class FlowgraphUtils {
                 .findFirst();
     }
 
-    public static Stream<Node> predecessorsOf(Node node) {
+    public synchronized static Stream<Node> predecessorsOf(Node node) {
         return predecessorMapCache
                 .computeIfAbsent(node.getBlock().getFunction(), FlowGraphBuilder::makeNodePredecessorMap)
                 .get(node)

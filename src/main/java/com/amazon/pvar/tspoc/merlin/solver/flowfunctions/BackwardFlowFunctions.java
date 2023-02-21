@@ -32,8 +32,8 @@ import java.util.*;
 
 public class BackwardFlowFunctions extends AbstractFlowFunctions {
 
-    public BackwardFlowFunctions(MerlinSolver containingSolver, QueryManager queryManager) {
-        super(containingSolver, queryManager);
+    public BackwardFlowFunctions(MerlinSolver containingSolver, QueryManager queryManager, FlowFunctionContext context) {
+        super(containingSolver, queryManager, context);
     }
 
     @Override
@@ -49,14 +49,14 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
     @Override
     public void visit(BinaryOperatorNode n) {
         final var resultReg = new Register(n.getResultRegister(), n.getBlock().getFunction());
-        if (!getQueryValue().equals(resultReg)) {
+        if (!context.queryValue().equals(resultReg)) {
             addNormalFlowToPreds(n);
         } else {
             // Overapproximate by adding flows to both arguments, since
             // we don't model the actual operator semantics and tracking value flows through
             // operators is needed for taint tracking examples in our case study.
             final var arg1 = new Register(n.getArg1Register(), n.getBlock().getFunction());
-            final var arg2  = new Register(n.getArg2Register(), n.getBlock().getFunction());
+            final var arg2 = new Register(n.getArg2Register(), n.getBlock().getFunction());
             genSingleNormalFlow(n, arg1);
             genSingleNormalFlow(n, arg2);
         }
@@ -70,9 +70,33 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
      */
     @Override
     public void visit(CallNode n) {
+        /*
+         * Special case: desugar method call resolution into field reads.
+         * Note that this logic should not really be handled in the flow function for
+         * CallNode, but in its predecessor,
+         * since we only create `MethodCall` facts when resolving method calls
+         * backwards. However, since we
+         * would have to remember to perform this logic for all other transfer
+         * functions, it seems less error-prone,
+         * albeit confusing, to handle it here, as MethodCall facts are only introduced
+         * in resolveFunctionCall.
+         */
+        if (context.queryValue() instanceof MethodCall methodCall && containingSolver != null) {
+            final var syntheticReadResultRegister = AbstractFlowFunctions.syntheticRegisterForMethodCall(n);
+            // Add a flow from the synthetic result register into the method call at n
+            final sync.pds.solver.nodes.Node<NodeState, Value> syntheticRegisterState = new sync.pds.solver.nodes.Node<>(
+                    makeNodeState(n), syntheticReadResultRegister);
+            containingSolver.propagate(context.currentPDSNode(), syntheticRegisterState);
+            final var baseRegister = new Register(
+                    methodCall.getCallNode().getBaseRegister(),
+                    methodCall.getCallNode().getBlock().getFunction());
+            handleFlowToFieldRead(n, baseRegister, new Property(methodCall.getCallNode().getPropertyString()),
+                    syntheticRegisterState, context);
+            return;
+        }
         // propagate across the call site
         final var resultReg = new Register(n.getResultRegister(), n.getBlock().getFunction());
-        if (!resultReg.equals(getQueryValue())) {
+        if (!resultReg.equals(context.queryValue())) {
             addNormalFlowToPreds(n);
         }
 
@@ -84,11 +108,11 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
         // propagate the assigned value to the return value of possibly invoked
         // functions, if necessary
 
-        if (getQueryValue().equals(resultReg) ||
-            getQueryValue() instanceof ObjectAllocation) {
+        if (context.queryValue().equals(resultReg) ||
+                context.queryValue() instanceof ObjectAllocation) {
             final var targetFunctions = resolveFunctionCall(n);
-            final var currentSPDSNode = currentPDSNode;
-            final var queryValue = getQueryValue();
+            final var currentSPDSNode = context.currentPDSNode();
+            final var queryValue = context.queryValue();
             if (containingSolver != null) {
                 final var queryID = containingSolver.getQueryID(currentSPDSNode, false, false);
                 continueWithSubqueryResult(targetFunctions, queryID, (targetFunction) -> {
@@ -104,24 +128,6 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
             }
         }
 
-        /* Special case: desugar method call resolution into field reads.
-        Note  that this logic should not really be handled in the flow function for CallNode, but in its predecessor,
-        since we only create `MethodCall` facts when resolving method calls backwards. However, since we
-        would have to remember to perform this logic for all other transfer functions, it seems less error-prone,
-        albeit confusing, to handle it here, as MethodCall facts are only introduced in resolveFunctionCall.
-        */
-        if (getQueryValue() instanceof MethodCall methodCall && containingSolver != null) {
-            final var syntheticReadResultRegister = AbstractFlowFunctions.syntheticRegisterForMethodCall(n);
-            // Add a flow from the synthetic result register into the method call at n
-            final sync.pds.solver.nodes.Node<NodeState, Value> syntheticRegisterState =
-                    new sync.pds.solver.nodes.Node<>(makeNodeState(n), syntheticReadResultRegister);
-            containingSolver.propagate(currentPDSNode, syntheticRegisterState);
-            final var baseRegister = new Register(
-                    methodCall.getCallNode().getBaseRegister(),
-                    methodCall.getCallNode().getBlock().getFunction()
-            );
-            handleFlowToFieldRead(n, baseRegister, new Property(methodCall.getCallNode().getPropertyString()), syntheticRegisterState);
-        }
     }
 
     /**
@@ -144,13 +150,13 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
      */
     @Override
     public void visit(ConstantNode n) {
-        if (n.getResultRegister() == 1 && (getQueryValue() instanceof Variable ||
-                getQueryValue() instanceof ObjectAllocation)) {
-            handleflowToFunctionEntry(n, getQueryValue());
+        if (n.getResultRegister() == 1 && (context.queryValue() instanceof Variable ||
+                context.queryValue() instanceof ObjectAllocation)) {
+            handleflowToFunctionEntry(n, context.queryValue(), context);
         }
 
         final var resultReg = new Register(n.getResultRegister(), n.getBlock().getFunction());
-        if (!getQueryValue().equals(resultReg)) {
+        if (!context.queryValue().equals(resultReg)) {
             addNormalFlowToPreds(n);
         }
     }
@@ -203,12 +209,12 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
             Variable newVar = new Variable(
                     n.getFunction().getName(),
                     getDeclaringScope(n.getFunction().getName(), n.getBlock().getFunction()));
-            if (!getQueryValue().equals(newVar)) {
+            if (!context.queryValue().equals(newVar)) {
                 addNormalFlowToPreds(n);
             }
         } else {
             final var resultReg = new Register(n.getResultRegister(), n.getBlock().getFunction());
-            if (!getQueryValue().equals(resultReg)) {
+            if (!context.queryValue().equals(resultReg)) {
                 addNormalFlowToPreds(n);
             }
         }
@@ -255,7 +261,7 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
     @Override
     public void visit(NewObjectNode n) {
         final var resultReg = new Register(n.getResultRegister(), n.getBlock().getFunction());
-        if (!getQueryValue().equals(resultReg)) {
+        if (!context.queryValue().equals(resultReg)) {
             addNormalFlowToPreds(n);
         }
     }
@@ -304,11 +310,11 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
         if (n.isPropertyFixed()) {
             // Property is a fixed String
             Property property = new Property(n.getPropertyString());
-            if (!getQueryValue().equals(result)) {
+            if (!context.queryValue().equals(result)) {
                 addNormalFlowToPreds(n);
             }
-            if (getQueryValue().equals(result)) {
-                handleFlowToFieldRead(n, baseRegister, property, this.currentPDSNode);
+            if (context.queryValue().equals(result)) {
+                handleFlowToFieldRead(n, baseRegister, property, context.currentPDSNode(), context);
             }
         } else {
             // TODO: dispatch a backward query on the register used for the property read
@@ -317,7 +323,7 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     private void handleFlowToFieldRead(Node location, Register baseRegister, Property property,
-                                       sync.pds.solver.nodes.Node<NodeState, Value> sourceState) {
+            sync.pds.solver.nodes.Node<NodeState, Value> sourceState, FlowFunctionContext context) {
         withAllocationSitesOf(location, baseRegister, alloc -> {
             assert containingSolver != null;
             getPredecessors(location)
@@ -326,11 +332,10 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
                                 makeNodeState(pred),
                                 alloc,
                                 property,
-                                SyncPDSSolver.PDSSystem.FIELDS
-                        );
+                                SyncPDSSolver.PDSSystem.FIELDS);
                         containingSolver.propagate(sourceState, pushNode);
                     });
-        }, queryValue);
+        }, context.queryValue());
     }
 
     /**
@@ -349,14 +354,14 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
                 getDeclaringScope(n.getVariableName(), n.getBlock().getFunction()));
         killed.add(resultReg);
         killed.add(baseReg);
-        if (!killed.contains(getQueryValue())) {
+        if (!killed.contains(context.queryValue())) {
             addNormalFlowToPreds(n);
         }
 
         // Add register -> variable flow if necessary
-        if (getQueryValue().equals(resultReg)) {
+        if (context.queryValue().equals(resultReg)) {
             genSingleNormalFlow(n, read);
-        } else if (getQueryValue().equals(baseReg)) {
+        } else if (context.queryValue().equals(baseReg)) {
             genSingleNormalFlow(n, read);
         }
     }
@@ -401,7 +406,7 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
     @Override
     public void visit(UnaryOperatorNode n) {
         final var resultReg = new Register(n.getResultRegister(), n.getBlock().getFunction());
-        if (!getQueryValue().equals(resultReg)) {
+        if (!context.queryValue().equals(resultReg)) {
             addNormalFlowToPreds(n);
         } else {
             final var argRegister = new Register(n.getArgRegister(), n.getBlock().getFunction());
@@ -433,7 +438,7 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
             // Property is a fixed String
             Property property = new Property(n.getPropertyString());
             treatAsNop(n); // adds normal flows for things not affected by heap write.
-            final var queryValue = getQueryValue();
+            final var queryValue = context.queryValue();
             withAllocationSitesOf(n, baseRegister, alloc -> {
                 if (queryValue.equals(alloc)) {
                     getPredecessors(n)
@@ -442,12 +447,11 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
                                         new NodeWithLocation<>(
                                                 makeNodeState(pred),
                                                 valueRegister,
-                                                property
-                                        ),
-                                        SyncPDSSolver.PDSSystem.FIELDS
-                                );
+                                                property),
+                                        SyncPDSSolver.PDSSystem.FIELDS);
                                 assert containingSolver != null;
-                                final var sourceNode = new sync.pds.solver.nodes.Node<>(makeNodeState(n), (Value)alloc);
+                                final var sourceNode = new sync.pds.solver.nodes.Node<>(makeNodeState(n),
+                                        (Value) alloc);
                                 containingSolver.propagate(sourceNode, popNode);
                             });
                 }
@@ -470,11 +474,11 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
         Variable write = new Variable(
                 n.getVariableName(),
                 getDeclaringScope(n.getVariableName(), n.getBlock().getFunction()));
-        if (!getQueryValue().equals(write)) {
+        if (!context.queryValue().equals(write)) {
             addNormalFlowToPreds(n);
         }
         // Add register -> variable flow if necessary
-        if (getQueryValue().equals(write)) {
+        if (context.queryValue().equals(write)) {
             genSingleNormalFlow(n, argRegister);
         }
     }
@@ -523,7 +527,7 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
     }
 
     @Override
-    protected synchronized void treatAsNop(Node n) {
+    protected void treatAsNop(Node n) {
         getPredecessors(n).forEach(this::addStandardNormalFlow);
     }
 
@@ -532,12 +536,14 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
                 .forEach(this::addStandardNormalFlow);
     }
 
-    protected synchronized void genSingleNormalFlow(Node n, Value v) {
+    @Override
+    protected void genSingleNormalFlow(Node n, Value v) {
         getPredecessors(n)
                 .forEach(predecessor -> addSingleState(predecessor, v));
     }
 
-    private synchronized void handleflowToFunctionEntry(ConstantNode entryNode, Value queryVal) {
+    private void handleflowToFunctionEntry(ConstantNode entryNode, Value queryVal,
+            FlowFunctionContext context) {
         DebugUtils.debug("Handling flow to entry of " + entryNode.getBlock().getFunction() + " looking backwards for "
                 + queryVal);
         Function containingFunction = entryNode.getBlock().getFunction();
@@ -545,9 +551,9 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
             return;
         }
         if (containingSolver != null) {
-            final var queryID = containingSolver.getQueryID(currentPDSNode, true, false);
+            final var queryID = containingSolver.getQueryID(context.currentPDSNode(), true, false);
             LiveCollection<CallNode> liveInvokes = findInvocationsOfFunction(containingFunction);
-            final var currentSPDSNode = currentPDSNode;
+            final var currentSPDSNode = context.currentPDSNode();
             if (queryVal instanceof Variable queryVar) {
                 Optional<String> paramName = containingFunction.getParameterNames().stream()
                         .filter(name -> name.equals(queryVar.getVarName()))
@@ -562,7 +568,8 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
                         DebugUtils.debug("handleflowToFunctionEntry[param]: found invocation of " + containingFunction +
                                 ": " + invoke + " for query: " + queryVal);
                         try {
-                            Register reg = new Register(invoke.getArgRegister(paramIndex), invoke.getBlock().getFunction());
+                            Register reg = new Register(invoke.getArgRegister(paramIndex),
+                                    invoke.getBlock().getFunction());
                             State nextState = makeSPDSNode(invoke, reg);
                             DebugUtils.debug("Propagating pop state: " + nextState + " where initialQuery=" +
                                     containingSolver.initialQuery + " and currentSPDSNode: " + currentSPDSNode);
@@ -576,7 +583,8 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
                         DebugUtils.debug("handleflowToFunctionEntry[non-param]: found invocation of " +
                                 containingFunction + ": " + invoke + " for query: " + queryVal);
                         Function invokeScope = invoke.getBlock().getFunction();
-                        // otherwise, if queryVal is not visible at call site, it must have been captured in a closure
+                        // otherwise, if queryVal is not visible at call site, it must have been
+                        // captured in a closure
                         // and we instead go back to the end of the defining function.
                         if (!queryVar.isVisibleIn(invokeScope)) {
                             Node outerScopeReturnNode = ((Node) containingFunction.getNode().getBlock().getFunction()
@@ -591,10 +599,13 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
                 }
             } else if (queryVal instanceof ObjectAllocation alloc) {
                 /*
-                If our target query is on an object allocation (introduced via field reads/writes), then
-                we cannot determine whether the object allocation was reached through a call site or a variable
-                capture in the surrounding scope. In this case, we treat both as possible predecessors.
-                */
+                 * If our target query is on an object allocation (introduced via field
+                 * reads/writes), then
+                 * we cannot determine whether the object allocation was reached through a call
+                 * site or a variable
+                 * capture in the surrounding scope. In this case, we treat both as possible
+                 * predecessors.
+                 */
                 continueWithSubqueryResult(liveInvokes, queryID, invoke -> {
                     final var nodeAtSurroundingScope = ((Node) containingFunction.getNode().getBlock().getFunction()
                             .getOrdinaryExit().getFirstNode());
@@ -609,15 +620,4 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
         }
     }
 
-    private BackwardFlowFunctions(MerlinSolver containingSolver, QueryManager queryManager,
-            FlowFunctionState savedState) {
-        super(containingSolver, queryManager);
-        this.queryValue = savedState.queryValue();
-        this.currentPDSNode = savedState.pdsNode();
-    }
-
-    @Override
-    protected BackwardFlowFunctions copyFromFlowFunctionState(FlowFunctionState state) {
-        return new BackwardFlowFunctions(containingSolver, queryManager, state);
-    }
 }

@@ -20,14 +20,11 @@ import com.amazon.pvar.tspoc.merlin.ir.NodeState;
 import com.amazon.pvar.tspoc.merlin.ir.Property;
 import com.amazon.pvar.tspoc.merlin.ir.Value;
 import com.amazon.pvar.tspoc.merlin.solver.flowfunctions.AbstractFlowFunctions;
-import dk.brics.tajs.flowgraph.AbstractNode;
 import dk.brics.tajs.flowgraph.Function;
 import dk.brics.tajs.flowgraph.jsnodes.CallNode;
 import org.jgrapht.graph.DefaultDirectedGraph;
-import org.jgrapht.graph.DefaultEdge;
 import org.jgrapht.nio.Attribute;
 import org.jgrapht.nio.DefaultAttribute;
-import org.jgrapht.nio.IntegerIdProvider;
 import org.jgrapht.nio.dot.DOTExporter;
 import sync.pds.solver.OneWeightFunctions;
 import sync.pds.solver.SyncPDSSolver;
@@ -38,16 +35,17 @@ import sync.pds.solver.nodes.PushNode;
 import wpds.impl.*;
 import wpds.interfaces.Location;
 import wpds.interfaces.State;
-import org.jgrapht.*;
-import org.jgrapht.ext.*;
-import org.jgrapht.io.*;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
-import java.nio.Buffer;
-import java.util.*;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 
 public abstract class MerlinSolver extends SyncPDSSolver<NodeState, Value, Property, Weight.NoWeight> {
@@ -95,10 +93,6 @@ public abstract class MerlinSolver extends SyncPDSSolver<NodeState, Value, Prope
         return queryManager.getCallGraph();
     }
 
-    public abstract AbstractFlowFunctions getFlowFunctions();
-
-    public abstract void withFlowFunctions(AbstractFlowFunctions flowFuncs, Runnable runnable);
-
     protected void updateCallGraph(Node<NodeState, Value> node, State nextState) {
         dk.brics.tajs.flowgraph.jsnodes.Node tajsNode = node.stmt().getNode();
         if (tajsNode instanceof CallNode callNode) {
@@ -129,14 +123,17 @@ public abstract class MerlinSolver extends SyncPDSSolver<NodeState, Value, Prope
         return callWeightFunction;
     }
 
+    protected abstract AbstractFlowFunctions makeFlowFunctions(Node<NodeState, Value> currentPDSNode);
+
     @Override
-    public synchronized  void computeSuccessor(Node<NodeState, Value> node) {
+    public synchronized void computeSuccessor(Node<NodeState, Value> node) {
         if (Objects.isNull(node.stmt().getNode())) {
             System.err.println("Warning: no predecessor statement found. " +
                     "The analysis may have reached the beginning of the program without finding an allocation site");
             return;
         }
-        for (final var nextNode: getFlowFunctions().nextNodes(node.stmt().getNode())) {
+        final var flowFunctions = makeFlowFunctions(node);
+        for (final var nextNode : flowFunctions.nextNodes(node.stmt().getNode())) {
             if (nextNode instanceof CallNode callNode) {
                 this.registerListener(updatedNode -> {
                     if (updatedNode.stmt().getNode().equals(callNode)) {
@@ -146,7 +143,7 @@ public abstract class MerlinSolver extends SyncPDSSolver<NodeState, Value, Prope
                 });
             }
         }
-        Set<State> nextStates = getFlowFunctions().computeNextStates(node.stmt().getNode(), node.fact());
+        final var nextStates = flowFunctions.computeNextStates();
         nextStates.forEach(nextState -> propagate(node, nextState));
     }
 
@@ -210,7 +207,7 @@ public abstract class MerlinSolver extends SyncPDSSolver<NodeState, Value, Prope
     public abstract void solve();
 
     @Override
-    public final synchronized void propagate(Node<NodeState, Value> curr, State s) {
+    public synchronized final void propagate(Node<NodeState, Value> curr, State s) {
         super.propagate(curr, s);
     }
 
