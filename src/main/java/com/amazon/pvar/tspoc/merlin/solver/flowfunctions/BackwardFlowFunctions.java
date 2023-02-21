@@ -51,6 +51,14 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
         final var resultReg = new Register(n.getResultRegister(), n.getBlock().getFunction());
         if (!getQueryValue().equals(resultReg)) {
             addNormalFlowToPreds(n);
+        } else {
+            // Overapproximate by adding flows to both arguments, since
+            // we don't model the actual operator semantics and tracking value flows through
+            // operators is needed for taint tracking examples in our case study.
+            final var arg1 = new Register(n.getArg1Register(), n.getBlock().getFunction());
+            final var arg2  = new Register(n.getArg2Register(), n.getBlock().getFunction());
+            genSingleNormalFlow(n, arg1);
+            genSingleNormalFlow(n, arg2);
         }
     }
 
@@ -395,6 +403,9 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
         final var resultReg = new Register(n.getResultRegister(), n.getBlock().getFunction());
         if (!getQueryValue().equals(resultReg)) {
             addNormalFlowToPreds(n);
+        } else {
+            final var argRegister = new Register(n.getArgRegister(), n.getBlock().getFunction());
+            genSingleNormalFlow(n, argRegister);
         }
     }
 

@@ -39,6 +39,15 @@ After that, the project can be built by running `sbt compile` and run via `sbt r
 
 The test suite can be run using `sbt test`.
 
+### Missing Features
+
+Several JavaScript features are not implemented/analyzed by this prototype:
+
+- Loops
+- Prototype chains
+- Asynchronous code (`async/await`, `Promise`)
+- Built-in JavaScript functions
+
 ## Security
 
 See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more information.
