@@ -89,8 +89,8 @@ cd "$PATH_TO_JAM"
 echo "re-compiling Jam"
 npm run build
 
-echo "Installing nodeprof transformer"
-npm install --prefix "nodeprof-transformer" &>/dev/null
+echo "Installing node-based evaluation tool"
+npm install --prefix "${CURRENT_DIR}" &>/dev/null
 
 cd "$CURRENT_DIR"
 echo "Finished setup"

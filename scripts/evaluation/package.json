@@ -1,11 +1,15 @@
 {
-  "name": "nodeprof-transformer",
+  "name": "merlin-cg-evaluation",
   "version": "1.0.0",
   "description": "",
-  "main": "index.ts",
+  "main": "cli.ts",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "makeComparable": "ts-node cli.ts"
+    "postprocess-dyn-cg": "ts-node cli.ts nodeprof-transform",
+    "jam-cg": "ts-node cli.ts jam-cg",
+    "dyn-cg": "ts-node cli.ts dyn-cg",
+    "full-eval": "ts-node cli.ts full-evaluation",
+    "run-eval": "npm run full-eval"
   },
   "author": "",
   "license": "Apache-2.0",
@@ -13,7 +17,7 @@
     "commander": "^10.0.0",
     "fs-extra": "^11.1.0",
     "ts-node": "^10.9.1",
-    "@types/commander": "^2.12.2",
+    "typescript": "^4.9.5",
     "@types/fs-extra": "^11.0.1"
   }
 }

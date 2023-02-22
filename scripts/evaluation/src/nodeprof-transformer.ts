@@ -1,8 +1,5 @@
-#!/usr/bin/env ts-node
 
 import * as fs from "fs-extra";
-import { program } from 'commander';
-import * as path from "path";
 
 interface ZeroBasedLocation {
   "line": number
@@ -46,7 +43,7 @@ const transformCGEntryToOneBased = (orig: NodeProfCallGraphEntry): NodeProfCallG
 })
 
 
-const transform = (inputFilePath: string, outputFilePath: string) => {
+export const nodeProfTransformer = (inputFilePath: string, outputFilePath: string) => {
 
   // read in file passed in
   const inputFile = fs.readFileSync(inputFilePath);
@@ -58,10 +55,3 @@ const transform = (inputFilePath: string, outputFilePath: string) => {
   // write 
   fs.writeFileSync(outputFilePath, JSON.stringify(filteredNodeprofJSON, undefined, 2));
 }
-
-program
-  .option('-i, --input [file]', 'the raw callgraph file from nodeprof')
-  .option('-o, --out [file]', 'output the callgraph as reformatted')
-program.parse();
-const options = program.opts();
-transform(path.resolve(options.input), path.resolve(options.out));
