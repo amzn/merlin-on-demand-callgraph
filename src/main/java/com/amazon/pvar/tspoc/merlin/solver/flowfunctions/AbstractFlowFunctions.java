@@ -21,10 +21,8 @@ import com.amazon.pvar.tspoc.merlin.livecollections.LiveCollection;
 import com.amazon.pvar.tspoc.merlin.livecollections.LiveSet;
 import com.amazon.pvar.tspoc.merlin.livecollections.TaggedHandler;
 import com.amazon.pvar.tspoc.merlin.solver.*;
-import dk.brics.tajs.flowgraph.AbstractNode;
 import dk.brics.tajs.flowgraph.Function;
 import dk.brics.tajs.flowgraph.jsnodes.*;
-import dk.brics.tajs.js2flowgraph.FlowGraphBuilder;
 import dk.brics.tajs.util.Pair;
 import sync.pds.solver.SyncPDSSolver;
 import sync.pds.solver.nodes.CallPopNode;
@@ -51,7 +49,6 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
     /**
      * Store node predecessor maps for each function as needed to avoid duplicating computation
      */
-    private final Map<Function, Map<AbstractNode, Set<AbstractNode>>> predecessorMapCache = Collections.synchronizedMap(new HashMap<>());
 
     protected sync.pds.solver.nodes.Node<NodeState, Value> currentPDSNode;
 
@@ -387,28 +384,45 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
      * @return
      */
     protected synchronized LiveCollection<Function> resolveFunctionCall(CallNode n) {
+        assert containingSolver != null;
         LiveCollection<Allocation> predecessorUnion = new LiveSet<>(queryManager.scheduler());
-        final var funcReg = new Register(n.getFunctionRegister(), n.getBlock().getFunction());
-        for (var predecessor : getPredecessors(n)) {
-            sync.pds.solver.nodes.Node<NodeState, Value> initialQuery = new sync.pds.solver.nodes.Node<>(
-                    new NodeState(predecessor),
-                    funcReg
+        if (n.getFunctionRegister() != -1) {
+            final var funcReg = new Register(n.getFunctionRegister(), n.getBlock().getFunction());
+            for (var predecessor : getPredecessors(n)) {
+                final sync.pds.solver.nodes.Node<NodeState, Value> initialQuery = new sync.pds.solver.nodes.Node<>(
+                        new NodeState(predecessor),
+                        funcReg
+                );
+                final var solver = queryManager.getOrStartBackwardQuery(initialQuery);
+                predecessorUnion = solver.getPointsToGraph().getPointsToSet(predecessor, funcReg)
+                        .union(predecessorUnion);
+            }
+            return AbstractFlowFunctions.allocationsToFunctions(predecessorUnion);
+        } else if (n.getPropertyString() != null) {
+            // Method call
+            final var methodCall = new MethodCall(n);
+            final sync.pds.solver.nodes.Node<NodeState, Value> query = new sync.pds.solver.nodes.Node<>(
+                    new NodeState(n),
+                    methodCall
             );
-            final var solver = queryManager.getOrStartBackwardQuery(initialQuery);
-            predecessorUnion = solver.getPointsToGraph().getPointsToSet(predecessor, funcReg)
-                    .union(predecessorUnion);
+            queryManager.getOrStartBackwardQuery(query);
+            final var pointsToSet = containingSolver.getPointsToGraph().getPointsToSet(n, methodCall);
+            return AbstractFlowFunctions.allocationsToFunctions(pointsToSet);
+        } else {
+            DebugUtils.warn("Unhandled: method calls to dynamic field of object");
+            return new LiveSet<>(queryManager.scheduler());
         }
-        return AbstractFlowFunctions.allocationsToFunctions(predecessorUnion);
+    }
+
+    protected static Register syntheticRegisterForMethodCall(CallNode callNode) {
+        // should only be called with method calls
+        assert FlowgraphUtils.isMethodCallWithStaticProperty(callNode);
+        // TODO: figure out if this ad-hoc register allocation is guaranteed to be unique
+        return new Register(-100 + -1 * callNode.getIndex(), callNode.getBlock().getFunction());
     }
 
     protected synchronized Collection<Node> getPredecessors(Node n) {
-        return predecessorMapCache
-                .computeIfAbsent(n.getBlock().getFunction(), FlowGraphBuilder::makeNodePredecessorMap)
-                .get(n)
-                .stream()
-                .filter(abstractNode -> abstractNode instanceof Node)
-                .map(abstractNode -> ((Node) abstractNode))
-                .collect(Collectors.toSet());
+        return FlowgraphUtils.predecessorsOf(n).collect(Collectors.toSet());
     }
 
     /**

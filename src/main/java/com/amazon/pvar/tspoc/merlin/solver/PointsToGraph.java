@@ -16,10 +16,7 @@
 package com.amazon.pvar.tspoc.merlin.solver;
 
 import com.amazon.pvar.tspoc.merlin.DebugUtils;
-import com.amazon.pvar.tspoc.merlin.ir.Allocation;
-import com.amazon.pvar.tspoc.merlin.ir.FunctionAllocation;
-import com.amazon.pvar.tspoc.merlin.ir.Register;
-import com.amazon.pvar.tspoc.merlin.ir.Value;
+import com.amazon.pvar.tspoc.merlin.ir.*;
 import com.amazon.pvar.tspoc.merlin.livecollections.LiveCollection;
 import com.amazon.pvar.tspoc.merlin.livecollections.LiveSet;
 import com.amazon.pvar.tspoc.merlin.livecollections.Scheduler;
@@ -125,30 +122,36 @@ public class PointsToGraph {
 
     /**
      * Get program call nodes that may invoke the provided function allocation
+     * 
      * @param functionAlloc
      * @return
      */
     public LiveCollection<CallNode> getKnownFunctionInvocations(FunctionAllocation functionAlloc) {
         final var allocLiveMap = allocationLiveMap.get(functionAlloc);
-        DebugUtils.debug("listening for function invocations of " + functionAlloc.getAllocationStatement()  +
-        " on " + allocLiveMap);
+        DebugUtils.debug("listening for function invocations of " + functionAlloc.getAllocationStatement() +
+                " on " + allocLiveMap);
         return allocLiveMap
                 .filter(ptl -> {
-                    if (ptl.getLocation() instanceof CallNode callNode &&
-                            ptl.getValue() instanceof Register register) {
-                        return callNode.getFunctionRegister() != -1 &&
-                                callNode.getFunctionRegister() == register.getId() &&
-                                callNode.getBlock().getFunction().equals(register.getContainingFunction());
+                    if (ptl.getLocation() instanceof CallNode callNode) {
+                        if (ptl.getValue() instanceof Register register) {
+                            return callNode.getFunctionRegister() != -1 &&
+                                    callNode.getFunctionRegister() == register.getId() &&
+                                    callNode.getBlock().getFunction().equals(register.getContainingFunction());
+                        } else if (ptl.getValue() instanceof MethodCall methodCall) {
+                            return methodCall.getCallNode().equals(callNode);
+                        } else {
+                            return false;
+                        }
                     }
                     return false;
                 })
-                .map(ptl -> (CallNode)ptl.getLocation());
+                .map(ptl -> (CallNode) ptl.getLocation());
 
     }
 
-
     /**
      * Add a points-to fact to the graph
+     * 
      * @param pointsToLocation
      * @param allocation
      */

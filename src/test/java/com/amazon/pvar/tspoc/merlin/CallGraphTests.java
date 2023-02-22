@@ -4,6 +4,8 @@ import com.amazon.pvar.tspoc.merlin.experiments.Main;
 import com.amazon.pvar.tspoc.merlin.ir.*;
 import com.amazon.pvar.tspoc.merlin.solver.CallGraph;
 import com.amazon.pvar.tspoc.merlin.solver.QueryManager;
+import com.amazon.pvar.tspoc.merlin.solver.flowfunctions.AbstractFlowFunctions;
+import dk.brics.tajs.flowgraph.AbstractNode;
 import dk.brics.tajs.flowgraph.FlowGraph;
 import dk.brics.tajs.flowgraph.Function;
 import dk.brics.tajs.flowgraph.jsnodes.CallNode;
@@ -20,6 +22,7 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.Flow;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -54,15 +57,23 @@ public final class CallGraphTests {
     }
 
     private void runFindCalleeTest(FindCallees findCallees) {
-        org.apache.log4j.Logger.getRootLogger().setLevel(Level.OFF);
+        org.apache.log4j.Logger.getRootLogger().setLevel(Level.DEBUG);
         final var queryManager = new QueryManager();
         final var callNode = findCallees.callNode();
-        if (callNode.getFunctionRegister() == -1) {
-            throw new RuntimeException("not supported yet");
+        final Value calleeQueryValue;
+        final dk.brics.tajs.flowgraph.jsnodes.Node startingLocation;
+        if (callNode.getFunctionRegister() != -1){
+            calleeQueryValue = new Register(callNode.getFunctionRegister(), callNode.getBlock().getFunction());
+            startingLocation = callNode;
+        } else if (callNode.getPropertyString() != null) {
+            startingLocation = callNode;
+            calleeQueryValue = new MethodCall(callNode);
+        } else {
+            throw new RuntimeException("resolving method calls with dynamic fields not supported");
         }
-        final Value calleeQueryValue = new Register(callNode.getFunctionRegister(), callNode.getBlock().getFunction());
+
         final var initialQuery = new Node<>(
-                new NodeState(callNode),
+                new NodeState(startingLocation),
                 calleeQueryValue
         );
         final var solver = queryManager.getOrStartBackwardQuery(initialQuery);
