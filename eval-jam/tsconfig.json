@@ -8,6 +8,7 @@
     "strict": true, /* Enable all strict type-checking options. */
     "skipLibCheck": true, /* Skip type checking all .d.ts files. */
     "downlevelIteration": true, /* Provide full support for iterables in 'for-of', spread, and destructuring when targeting 'ES5' or 'ES3'. */
+    "typeRoots": ["./node_modules/@types","./node_modules/jam/typings"], /* JAM in ISSTA-2021-Paper-156 has some important custom typings which our wrapper also needs */
     "lib": [
       "dom",
       "es5",
@@ -18,10 +19,6 @@
     "resolveJsonModule": true
   },
   "include": [
-    "src/**/*.ts",
-    /* Unfortunately, Jam cannot be used as an ordinary dependency, since it's not published to NPM and
-    adding the github repository as a dependency does not build the required JS files. Instead we
-    include its sources directly in our TypeScript build via git submodules. */
-    "ISSTA-2021-Paper-156"
+    "src/**/*.ts"
   ],
 }

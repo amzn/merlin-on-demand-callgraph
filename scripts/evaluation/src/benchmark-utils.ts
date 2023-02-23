@@ -3,6 +3,7 @@ import * as path from "path";
 
 const defaultEvaluationDir = path.resolve(__dirname, '..');
 
+export const projectRootDir = path.resolve(defaultEvaluationDir, '..', '..');
 export const getDynCgsDir = (rootDir = defaultEvaluationDir) => path.resolve(rootDir, "dyn_cgs");
 export const getJamCgsDir = (rootDir = defaultEvaluationDir) => path.resolve(rootDir, "jam_cgs");
 export const getBenchmarkModulesDir  = (rootDir = defaultEvaluationDir) =>  path.resolve(rootDir, "eval-targets", "node_modules")
