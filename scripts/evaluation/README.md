@@ -12,6 +12,6 @@ This directory contains resources for empirically evaluating Merlin
 - run the `eval-setup.sh` script to install the evaluation dataset and fix a few minor path errors in Jam
 
 ## Running
-The full evaluation can be run using `./eval-run.sh -j <path-to-jam-dir> -n <path-to-nodeprof-dir>`
+The full evaluation can be run using `npm run full-eval -- -j <path-to-jam-dir> -n <path-to-nodeprof-dir>`. You can also pass an additional `-b <benchmark1> -b <benchmark2>` to run only on those benchmarks. `npm run full-eval -- --help` is also available.
 
 TODO: additional instructions

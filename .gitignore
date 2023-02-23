@@ -1,4 +1,5 @@
 eval-jam/node_modules/*
+scripts/evaluation/node_modules/*
 .bsp
 .idea
 .metals
