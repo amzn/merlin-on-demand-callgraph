@@ -15,6 +15,7 @@
 
 package com.amazon.pvar.tspoc.merlin.ir;
 
+import dk.brics.tajs.flowgraph.jsnodes.CallNode;
 import dk.brics.tajs.flowgraph.jsnodes.NewObjectNode;
 import dk.brics.tajs.flowgraph.jsnodes.Node;
 
@@ -29,10 +30,21 @@ import java.util.Objects;
  */
 public class ObjectAllocation extends Register implements Allocation {
 
-    private final NewObjectNode allocationStatement;
+    private final Node allocationStatement;
+    private final Register resultRegister;
 
-    public ObjectAllocation(NewObjectNode allocationStatement) {
-        super(allocationStatement.getResultRegister(), allocationStatement.getBlock().getFunction());
+    public ObjectAllocation(Node allocationStatement) {
+        super(allocationStatement instanceof NewObjectNode ?
+                 ((NewObjectNode) allocationStatement).getResultRegister()
+                : ((CallNode) allocationStatement).getResultRegister(),
+                allocationStatement.getBlock().getFunction());
+        if (allocationStatement instanceof NewObjectNode newObjectNode) {
+            resultRegister = new Register(newObjectNode.getResultRegister(), allocationStatement.getBlock().getFunction());
+        } else if (allocationStatement instanceof CallNode callNode && callNode.isConstructorCall()) {
+            resultRegister = new Register(callNode.getResultRegister(), callNode.getBlock().getFunction());
+        } else {
+            throw new RuntimeException("Only NewObjectNodes or constructor call nodes can be used as object allocations");
+        }
         this.allocationStatement = allocationStatement;
     }
 
@@ -42,8 +54,12 @@ public class ObjectAllocation extends Register implements Allocation {
     }
 
     @Override
-    public NewObjectNode getAllocationStatement() {
+    public Node getAllocationStatement() {
         return allocationStatement;
+    }
+
+    public Register getResultRegister() {
+        return resultRegister;
     }
 
     @Override

@@ -105,9 +105,17 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
             return;
         }
 
+        // If the call is a constructor call, kill the flow if the query value matches
+        if (n.isConstructorCall() &&
+                n.getResultRegister() != 1 &&
+                context.queryValue() instanceof Register reg &&
+                reg.getId() == n.getResultRegister() &&
+                reg.getContainingFunction().equals(n.getBlock().getFunction())) {
+            return;
+        }
+
         // propagate the assigned value to the return value of possibly invoked
         // functions, if necessary
-
         if (context.queryValue().equals(resultReg) ||
                 context.queryValue() instanceof ObjectAllocation) {
             final var targetFunctions = resolveFunctionCall(n);

@@ -540,7 +540,7 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
 
         if (context.queryValue().equals(argRegister) || // ad-hoc fix:
                 context.queryValue() instanceof ObjectAllocation objAlloc
-                        && objAlloc.getAllocationStatement().getResultRegister() == n.getValueRegister()) {
+                        && objAlloc.getResultRegister().getId() == n.getValueRegister()) {
             genSingleNormalFlow(n, write);
 
             // If the variable we are writing to flows to a closure, we also need to

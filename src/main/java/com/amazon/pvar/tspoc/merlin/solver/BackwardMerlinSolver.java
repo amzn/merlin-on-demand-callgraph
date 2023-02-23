@@ -79,9 +79,18 @@ public class BackwardMerlinSolver extends MerlinSolver {
                                         initialQuery.fact(), objAlloc
                                 );
                             }
+                        } else if (tajsNode instanceof CallNode callNode && 
+                                callNode.isConstructorCall() &&
+                                node.fact() instanceof Register register &&
+                                register.getId() == callNode.getResultRegister() &&
+                                register.getContainingFunction().equals(callNode.getBlock().getFunction())) {
+                            final var objAlloc = new ObjectAllocation(callNode);
+                            queryManager.addPointsToFact(initialQuery.stmt().getNode(), initialQuery.fact(),
+                                    objAlloc);
                         } else if (tajsNode instanceof ConstantNode constantNode &&
                                 node.fact() instanceof Register register) {
-                            if (constantNode.getResultRegister() == register.getId()) {
+                            if (constantNode.getResultRegister() == register.getId() &&
+                                    register.getContainingFunction().equals(tajsNode.getBlock().getFunction())) {
                                 ConstantAllocation constantAllocation = new ConstantAllocation(constantNode);
                                 queryManager.addPointsToFact(
                                         initialQuery.stmt().getNode(),

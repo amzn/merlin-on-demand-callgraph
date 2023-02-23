@@ -38,7 +38,7 @@ public class FlowgraphUtils {
     }
 
     public static boolean isMethodCallWithStaticProperty(CallNode callNode) {
-        return callNode.getResultRegister() == -1 && callNode.getPropertyString() != null;
+        return callNode.getFunctionRegister() == -1 && callNode.getPropertyString() != null;
     }
 
     private final static Map<Function, Map<AbstractNode, Set<AbstractNode>>> predecessorMapCache = Collections.synchronizedMap(new HashMap<>());
