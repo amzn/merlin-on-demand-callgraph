@@ -216,6 +216,7 @@ public class Main {
                 e.printStackTrace();
             }
         });
+        queryManager.solve();
         timer.stop();
         ExperimentUtils.Statistics.incrementTotalTime(timer.getTotalElapsed());
         ExperimentUtils.Statistics.incrementCGEdgesFound(cg.size());

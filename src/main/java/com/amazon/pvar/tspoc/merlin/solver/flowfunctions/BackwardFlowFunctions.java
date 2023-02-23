@@ -118,7 +118,7 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
         // functions, if necessary
         if (context.queryValue().equals(resultReg) ||
                 context.queryValue() instanceof ObjectAllocation) {
-            final var targetFunctions = resolveFunctionCall(n);
+            final var targetFunctions = resolveFunctionCall(n, queryManager);
             final var currentSPDSNode = context.currentPDSNode();
             final var queryValue = context.queryValue();
             if (containingSolver != null) {
@@ -628,4 +628,38 @@ public class BackwardFlowFunctions extends AbstractFlowFunctions {
         }
     }
 
+    @Override
+    public void handleUnresolvedCall() {
+        assert containingSolver != null;
+        final var node = context.currentPDSNode().stmt().getNode();
+        if (node instanceof CallNode callNode) {
+            if (callNode.getResultRegister() != -1 &&
+                    context.queryValue() instanceof Register reg &&
+                    reg.getId() == callNode.getResultRegister() &&
+                    reg.getContainingFunction().equals(callNode.getBlock().getFunction())) {
+                // Propagate to each argument to capture dependency of function result on input
+                for (int i = 0; i < callNode.getNumberOfArgs(); i++) {
+                    final var argRegister = new Register(callNode.getArgRegister(i), callNode.getBlock().getFunction());
+                    getPredecessors(callNode)
+                            .forEach(pred -> {
+                                final var nextState = makeSPDSNode(pred, argRegister);
+                                containingSolver.propagate(context.currentPDSNode(), nextState);
+                            });
+                }
+                // If this is a method call, also add a flow from the base register into the result,
+                // capturing methods on primitive values
+                if (FlowgraphUtils.isMethodCallWithStaticProperty(callNode)) {
+                    final var baseRegister = new Register(callNode.getBaseRegister(), callNode.getBlock().getFunction());
+                    getPredecessors(callNode)
+                            .forEach(pred -> {
+                                final var nextState = makeSPDSNode(pred, baseRegister);
+                                containingSolver.propagate(context.currentPDSNode(), nextState);
+                            });
+                }
+            }
+        } else {
+            throw new RuntimeException("Precondition violated: handleUnresolvedCall invoked on node that's not" +
+                    "a CallNode: " + node);
+        }
+    }
 }

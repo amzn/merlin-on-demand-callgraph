@@ -98,7 +98,7 @@ public final class CallGraphTests {
                 funcAlloc
         );
         final var solver = queryManager.getOrStartForwardQuery(initialQuery);
-        solver.solve();
+        queryManager.solve();
         queryManager.scheduler().waitUntilDone();
         final var callGraph = queryManager.getCallGraph();
         final var actualCallers = callGraph
@@ -130,7 +130,7 @@ public final class CallGraphTests {
                 findAllocs.value()
         );
         final var solver = queryManager.getOrStartBackwardQuery(initialQuery);
-        solver.solve();
+        queryManager.solve();
         final var pointsToSet = queryManager.getPointsToGraph().getPointsToSet(findAllocs.node(), findAllocs.value());
         assertThat(pointsToSet.toJavaSet(), equalTo(findAllocs.expectedAllocations()));
     }

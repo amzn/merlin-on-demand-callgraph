@@ -64,7 +64,7 @@ libraryDependencies += "org.jgrapht" % "jgrapht-io" % "1.5.1"
 // https://mvnrepository.com/artifact/org.jgrapht/jgrapht-ext
 libraryDependencies += "org.jgrapht" % "jgrapht-ext" % "1.5.1"
 
-Compile / run / mainClass := Some(
+Compile / mainClass := Some(
   "com.amazon.pvar.tspoc.merlin.experiments.Main"
 )
 
@@ -84,3 +84,5 @@ libraryDependencies += "com.github.sbt" % "junit-interface" % "0.13.3" % Test
 
 Compile / doc / sources := Seq.empty
 Compile / packageDoc / publishArtifact := false
+
+enablePlugins(JavaAppPackaging)

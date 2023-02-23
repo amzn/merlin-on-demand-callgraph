@@ -22,6 +22,7 @@ import com.amazon.pvar.tspoc.merlin.ir.Value;
 import com.amazon.pvar.tspoc.merlin.solver.flowfunctions.AbstractFlowFunctions;
 import dk.brics.tajs.flowgraph.Function;
 import dk.brics.tajs.flowgraph.jsnodes.CallNode;
+import dk.brics.tajs.util.Pair;
 import org.jgrapht.graph.DefaultDirectedGraph;
 import org.jgrapht.nio.Attribute;
 import org.jgrapht.nio.DefaultAttribute;
@@ -40,11 +41,7 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.*;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 
@@ -52,6 +49,10 @@ public abstract class MerlinSolver extends SyncPDSSolver<NodeState, Value, Prope
 
     public final Node<NodeState, Value> initialQuery;
     protected final QueryManager queryManager;
+    /**
+     * Unresolved calls for which we added artificial data flows already.
+     * */
+    protected final Set<Pair<CallNode, Value>> handledUnresolvedCalls = new HashSet<>();
 
     /**
      * The SyncPDSSolver class requires WeightFunctions in the case that the analysis includes a weight domain.
@@ -283,6 +284,10 @@ public abstract class MerlinSolver extends SyncPDSSolver<NodeState, Value, Prope
         }
     }
 
+    private String sanitizeDotName(String input) {
+        return input.replace("\\\"", "?");
+    }
+
     public BufferedImage visualizeFieldPDS(WeightedPushdownSystem<Property, INode<Node<NodeState, Value>>, Weight.NoWeight> fieldPDS) {
         final var graph = new DefaultDirectedGraph<Node<NodeState, Value>, FieldEdge>(FieldEdge.class);
         final Consumer<Node<NodeState, Value>> ensureVertexExists = (vertex) -> {
@@ -301,12 +306,12 @@ public abstract class MerlinSolver extends SyncPDSSolver<NodeState, Value, Prope
         final var dotExporter = new DOTExporter<Node<NodeState, Value>, FieldEdge>();
         dotExporter.setVertexAttributeProvider(vertex -> {
             final Map<String, Attribute> result = new HashMap<>();
-            result.put("label", DefaultAttribute.createAttribute(vertex.toString()));
+            result.put("label", DefaultAttribute.createAttribute(sanitizeDotName(vertex.toString())));
             return result;
         });
         dotExporter.setEdgeAttributeProvider(edge -> {
             final Map<String, Attribute> result = new HashMap<>();
-            result.put("label", DefaultAttribute.createAttribute(edge.toString()));
+            result.put("label", DefaultAttribute.createAttribute(sanitizeDotName(edge.toString())));
             return result;
         });
         try {
@@ -318,7 +323,10 @@ public abstract class MerlinSolver extends SyncPDSSolver<NodeState, Value, Prope
             final var tempSVGFile = File.createTempFile(prefix, ".svg");
             final var procBuilder = new ProcessBuilder("dot", "-Tsvg", "-o" + tempSVGFile, tempDotFile.toString());
             System.out.println("SVG written to " + tempSVGFile);
-            procBuilder.start().waitFor();
+            final var result = procBuilder.start().waitFor();
+            if (result != 0) {
+                throw new RuntimeException("Failed to convert dot file to svg");
+            }
             java.awt.Desktop.getDesktop().open(tempSVGFile);
             return ImageIO.read(tempSVGFile);
         } catch (IOException | InterruptedException e) {
@@ -345,4 +353,35 @@ public abstract class MerlinSolver extends SyncPDSSolver<NodeState, Value, Prope
         visualizeFieldPDS(this.fieldPDS);
     }
 
+    /**
+     * Add data flows for unresolved function calls to provide "less unsound" results
+     * for unresolved methods.
+     *
+     * @return Returns true iff any new data flow was added */
+    public final boolean addDataFlowsForUnresolvedFunctionCalls() {
+        var changed = false;
+        queryManager.scheduler().waitUntilDone();
+        for (final var state : this.getReachedStates()) {
+            if (state.stmt().getNode() instanceof CallNode callNode) {
+                final var callees = AbstractFlowFunctions.resolveFunctionCall(callNode, queryManager).toJavaSet();
+                final var callAndQuery = Pair.make(callNode, state.fact());
+                if (callees.isEmpty() && !handledUnresolvedCalls.contains(callAndQuery)) {
+                    AbstractFlowFunctions.logUnsoundness(callNode, "Treating unresolved function call as side-effect free");
+                    // Add data flow for unresolved function call
+                    final var flowFunctions = makeFlowFunctions(new Node<>(
+                            new NodeState(callNode),
+                            state.fact()
+                    ));
+                    flowFunctions.handleUnresolvedCall();
+                    handledUnresolvedCalls.add(callAndQuery);
+                    changed = true;
+                }
+            }
+        }
+        return changed;
+    }
+
+    public synchronized int stateCount() {
+        return getReachedStates().size();
+    }
 }

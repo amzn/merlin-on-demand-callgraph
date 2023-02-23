@@ -226,7 +226,7 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest {
         final var queryManager = new QueryManager();
         BackwardMerlinSolver solver = queryManager.getOrStartBackwardQuery(initialQuery);
         Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal).toJavaSet();
-        queryManager.scheduler().waitUntilDone();
+        queryManager.solve();
         printPointsTo(queryVal, queryNode, pts);
         assert pts.contains(new ObjectAllocation(((NewObjectNode) getNodeByIndex(16, flowGraph)))) &&
                         pts.contains(new ConstantAllocation(((ConstantNode) getNodeByIndex(43, flowGraph))));
@@ -639,8 +639,7 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest {
         );
         final var queryManager = new QueryManager();
         final var solver = queryManager.getOrStartForwardQuery(initialQuery);
-        solver.solve();
-        queryManager.scheduler().waitUntilDone();
+        queryManager.solve();
         final var pointsToLocations = queryManager.getPointsToGraph().getKnownValuesPointingTo((Allocation)queryVal).toJavaSet();
         printPointsToLocations(queryVal, queryNode, pointsToLocations);
         final var resultLocation = new PointsToGraph.PointsToLocation(
@@ -690,7 +689,7 @@ public class InterproceduralPointsToTests extends AbstractCallGraphTest {
         );
         final var queryManager = new QueryManager();
         BackwardMerlinSolver solver = queryManager.getOrCreateBackwardSolver(initialQuery);
-        solver.solve();
+        queryManager.solve();
         Collection<Allocation> pts = solver.getPointsToGraph().getPointsToSet(queryNode, queryVal).toJavaSet();
 
         printPointsTo(queryVal, queryNode, pts);

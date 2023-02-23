@@ -33,6 +33,8 @@ import wpds.interfaces.State;
 import java.util.*;
 import java.util.concurrent.Flow;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 public class ForwardFlowFunctions extends AbstractFlowFunctions {
 
@@ -40,7 +42,8 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
      * Store node successor maps for each function as needed to avoid duplicating
      * computation
      */
-    private final Map<Function, Map<AbstractNode, Set<AbstractNode>>> successorMapCache = new HashMap<>();
+    private final Map<Function, Map<AbstractNode, Set<AbstractNode>>> successorMapCache =
+            Collections.synchronizedMap(new HashMap<>());
 
     public ForwardFlowFunctions(MerlinSolver containingSolver, QueryManager queryManager, FlowFunctionContext context) {
         super(containingSolver, queryManager, context);
@@ -92,7 +95,7 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
         if (containingSolver != null) {
             final var queryID = containingSolver.getQueryID(context.currentPDSNode(), false, false);
             final var sourceState = context.currentPDSNode();
-            continueWithSubqueryResult(resolveFunctionCall(n), queryID,
+            continueWithSubqueryResult(resolveFunctionCall(n, queryManager), queryID,
                     callee -> this.handleFlowToCallee(n, callee, sourceState, context));
         }
         // Propagate values across the call site
@@ -400,17 +403,8 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
                             n.getBlock().getFunction() + "[fwd query: " + containingSolver.initialQuery + "]");
                     Register returnReg = new Register(returnSite.getResultRegister(),
                             returnSite.getBlock().getFunction());
-                    // getSuccessors(returnSite)
-                    // .forEach(returnSucc -> {
-                    // State popState = callPopState(returnSucc, returnReg);
-                    // containingSolver.propagate(currentSPDSNode, popState);
-                    // });
                     State popState = callPopState(returnSite, returnReg);
-                    if (popState.toString().contains("v9")) {
-                        final var breakpoin = 1;
-                    }
                     containingSolver.propagate(currentSPDSNode, popState);
-                    // containingSolver.solve();
                 }
                 // Handle return propagation of formal parameters
                 // TODO: and any other values visible but not declared in this function scope
@@ -653,6 +647,25 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
                         capturedVar);
                 containingSolver.propagate(callSiteState, inFuncState);
             });
+        }
+    }
+
+    @Override
+    public void handleUnresolvedCall() {
+        assert containingSolver != null;
+        final var node = context.currentPDSNode().stmt().getNode();
+        if (node instanceof CallNode callNode && callNode.getResultRegister() != 1) {
+            final var parameters = IntStream.range(0, callNode.getNumberOfArgs())
+                    .mapToObj(argIdx -> new Register(callNode.getArgRegister(argIdx), callNode.getBlock().getFunction()))
+                    .collect(Collectors.toSet());
+            if (parameters.contains(context.queryValue())) {
+                // add flow into result
+                final var resultReg = new Register(callNode.getResultRegister(), callNode.getBlock().getFunction());
+                getSuccessors(callNode)
+                        .forEach(succ -> containingSolver.propagate(context.currentPDSNode(), makeSPDSNode(succ, resultReg)));
+            }
+        } else {
+            logUnsoundness(node, "Precondition violated: handleUnresolvedCall transfer invoked for non-call-node: " + node);
         }
     }
 }
