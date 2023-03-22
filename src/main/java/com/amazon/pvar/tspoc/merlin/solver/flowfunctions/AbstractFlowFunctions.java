@@ -181,9 +181,13 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
         );
     }
 
-    protected void logUnsoundness(Node node) {
+    public static void logUnsoundness(Node node) {
+       logUnsoundness(node, "");
+    }
+
+    public static void logUnsoundness(Node node, String message) {
         System.err.println("Warning - Unsoundness from unhandled language feature at:\n" +
-                "\t" + node.getSourceLocation().toUserFriendlyString(true) + "\n");
+                "\t" + node.getSourceLocation().toUserFriendlyString(true) + "\n" + message);
     }
 
     /**
@@ -274,12 +278,14 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
      * @param n
      * @return
      */
-    protected LiveCollection<Function> resolveFunctionCall(CallNode n) {
-        assert containingSolver != null;
+    public static LiveCollection<Function> resolveFunctionCall(CallNode n, QueryManager queryManager) {
+        if (n.getTajsFunctionName() != null) {
+            return new LiveSet<>(queryManager.scheduler()); // don't try to resolve TAJS functions
+        }
         LiveCollection<Allocation> predecessorUnion = new LiveSet<>(queryManager.scheduler());
         if (n.getFunctionRegister() != -1) {
             final var funcReg = new Register(n.getFunctionRegister(), n.getBlock().getFunction());
-            for (var predecessor : getPredecessors(n)) {
+            for (var predecessor : FlowgraphUtils.predecessorsOf(n).toList()) {
                 final sync.pds.solver.nodes.Node<NodeState, Value> initialQuery = new sync.pds.solver.nodes.Node<>(
                         new NodeState(predecessor),
                         funcReg
@@ -296,8 +302,8 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
                     new NodeState(n),
                     methodCall
             );
-            queryManager.getOrStartBackwardQuery(query);
-            final var pointsToSet = containingSolver.getPointsToGraph().getPointsToSet(n, methodCall);
+            final var solver = queryManager.getOrStartBackwardQuery(query);
+            final var pointsToSet = solver.getPointsToGraph().getPointsToSet(n, methodCall);
             return AbstractFlowFunctions.allocationsToFunctions(pointsToSet);
         } else {
             DebugUtils.warn("Unhandled: method calls to dynamic field of object");
@@ -352,4 +358,7 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
             basePointsToSet.onAdd(TaggedHandler.create(bwdsID, handler));
         }
     }
+
+    // Precondition: called only on flow function instance at a CallNode
+    public abstract void handleUnresolvedCall();
 }

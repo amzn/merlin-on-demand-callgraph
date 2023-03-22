@@ -84,6 +84,24 @@ class QueryManager() {
       case _ =>
     }
   }
+
+  /** Run all solvers to completion */
+  def solve(): Unit = {
+    scheduler.waitUntilDone()
+    var stillIterating = true
+    // After solving, we still need to handle unresolved function calls, which may each
+    // trigger additional flows in other solvers leading to more unresolved calls. We handle
+    // this by computing the fixed point of repeatedly adding data flows for unresolved
+    // calls until no new data flows are found
+    while (stillIterating) {
+      stillIterating = false
+      for (solver <- backwardSolvers.values ++ forwardSolvers.values) {
+          if(solver.addDataFlowsForUnresolvedFunctionCalls()) {
+            stillIterating = true
+          }
+      }
+    }
+  }
 }
 
 object QueryManager {

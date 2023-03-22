@@ -224,10 +224,6 @@ public class BackwardMerlinSolver extends MerlinSolver {
         );
     }
 
-    public boolean isFunctionQuery() {
-        return isFunctionQuery;
-    }
-
     public void setFunctionQuery(boolean functionQuery) {
         isFunctionQuery = functionQuery;
     }
