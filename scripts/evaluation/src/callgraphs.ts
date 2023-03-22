@@ -37,12 +37,3 @@ export const runJam = (
   
   return execSync(jamCmd, {shell: '/bin/bash', env: { ...process.env, NODE_HOME: graalNodeHome }});
 };
-
-export const runMerlin = (
-  benchmark: string, 
-  outputFile: string, 
-  mainFile: string = getBenchmarkMainFile(benchmark)
-) => {
-  const merlinCmd = `sbt "run --file ${mainFile} --output ${outputFile}"`
-  return execSync(merlinCmd, {shell: '/bin/bash', cwd: projectRootDir});
-};
