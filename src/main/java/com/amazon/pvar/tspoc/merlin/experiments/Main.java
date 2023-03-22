@@ -18,7 +18,9 @@ package com.amazon.pvar.tspoc.merlin.experiments;
 import com.amazon.pvar.tspoc.merlin.ir.*;
 import com.amazon.pvar.tspoc.merlin.solver.BackwardMerlinSolver;
 import com.amazon.pvar.tspoc.merlin.solver.CallGraph;
+import com.amazon.pvar.tspoc.merlin.solver.Query;
 import com.amazon.pvar.tspoc.merlin.solver.QueryManager;
+import com.google.gson.*;
 import dk.brics.tajs.flowgraph.FlowGraph;
 import dk.brics.tajs.flowgraph.jsnodes.CallNode;
 import dk.brics.tajs.flowgraph.jsnodes.DeclareFunctionNode;
@@ -28,14 +30,46 @@ import sync.pds.solver.nodes.Node;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.Writer;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
+import javax.management.RuntimeErrorException;
+
 public class Main {
+
+    public record QueryResult(
+        String queryName, 
+        JsonElement queryCallGraph, 
+        long queryRunTime
+    ) {}
+    public record ExperimentResult(
+        String jsFile, 
+        List<QueryResult> queryResults, 
+        JsonElement experimentCallGraph, 
+        long totalExperimentTime, 
+        double meanQueryTime
+    ) {}
+    public record MerlinResult(
+        String path, 
+        List<ExperimentResult> experimentResults, 
+        int fileCount, 
+        int queryCount, 
+        int queriesPerProgram, 
+        int maxQueries, 
+        int uniqueCallgraphEdges,
+        long totalTime, 
+        long timePerFile, 
+        long timePerQuery
+    ) {}
 
     // Create additional config values, see https://github.com/cs-au-dk/TAJS#environment-configuration for overview
     // and tajs_vs/src/dk/brics/tajs/TAJSEnvironmentConfig.java for all options
@@ -119,30 +153,35 @@ public class Main {
 
     public static void main(String[] args) {
         ExperimentOptions.parse(args);
+
+        // either get the directory for the DirectoryStream, or turn the single file into 
+        // a DirectoryStream by filtering the parent dir down to the single file
+        Path directory = null; 
+        String filter = "";
         if (ExperimentOptions.isAnalyzeDirectory()) {
-            Path directory = Paths.get(ExperimentOptions.getAnalysisDir());
-            try (DirectoryStream<Path> directoryStream = Files.newDirectoryStream(directory, "*.js");
-                    FileWriter resultWriter = new FileWriter(ExperimentOptions.getOutputFile())) {
-                directoryStream.forEach(jsFile -> {
-                    ExperimentUtils.Statistics.incrementTotalFiles();
-                    try {
-                        resultWriter.write("Analyzing " + jsFile + "\n");
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                    runExperiment(jsFile.toString(), resultWriter);
-                });
-            } catch (IOException e) {
-                e.printStackTrace();
-                System.exit(1);
-            }
+            directory = Paths.get(ExperimentOptions.getAnalysisDir());
+            filter = "*.js";
+            
         } else {
-            String filename = ExperimentOptions.getAnalysisFile();
-            try (FileWriter resultWriter = new FileWriter(ExperimentOptions.getOutputFile())) {
-                runExperiment(filename, resultWriter);
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
+            Path analysisFile = Paths.get(ExperimentOptions.getAnalysisFile());
+            directory = analysisFile.getParent();
+            filter = analysisFile.getFileName().toString();
+        }
+
+        List<ExperimentResult> experimentResults = new ArrayList();
+
+        try (DirectoryStream<Path> directoryStream = Files.newDirectoryStream(directory, filter)) {
+            directoryStream.forEach(jsFile -> {
+                System.out.println("Analyzing " + jsFile + "\n");
+
+                ExperimentUtils.Statistics.incrementTotalFiles();
+                ExperimentResult result = runExperiment(jsFile.toString(), new PrintWriter(System.out, true));
+               
+                experimentResults.add(result);
+            });
+        } catch (IOException e) {
+            e.printStackTrace();
+            System.exit(1);
         }
 
         // Printing statistics
@@ -164,27 +203,48 @@ public class Main {
         System.out.println("Elapsed time:\t\t\t" + timeElapsed + "ms");
         System.out.println("Time per program:\t\t" + timePerFile + "ms");
         System.out.println("Time per query:\t\t\t" + timePerQuery + "ms");
+
+        try {
+            String name = directory.toString() + File.separator + filter;
+
+            final var merlinResults = new MerlinResult(
+                    name, experimentResults, fileCount, queryCount, 
+                    queriesPerProgram, maxQueries, cgEdges, timeElapsed, timePerFile, timePerQuery
+            );
+            FileWriter outputWriter = new FileWriter(ExperimentOptions.getOutputFile());
+            final var json = (new GsonBuilder().setPrettyPrinting().create()).toJson(merlinResults);
+            outputWriter.write(json);
+            outputWriter.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+            System.exit(1);
+        }
     }
 
-    private static void runExperiment(String jsFile, FileWriter outputWriter) {
-        CallGraph cg = new CallGraph();
+    private static ExperimentResult runExperiment(String jsFile, Writer outputWriter) {
         boolean debugFlag = ExperimentOptions.dumpFlowGraph();
         if (debugFlag) {
             org.apache.log4j.Logger.getRootLogger().setLevel(Level.DEBUG);
         }
         FlowGraph flowGraph = flowGraphForProgram(jsFile, debugFlag);
+        
         Set<Node<NodeState, Value>> taintQueries = ExperimentUtils.getTaintQueries(flowGraph);
         int count = taintQueries.size();
         if (count == 0) {
-            System.err.println("No queries detected for " + jsFile);
+            System.err.println("FATAL: No queries detected for " + jsFile);
             System.exit(1);
         } else {
             System.err.println("Detected queries: " + taintQueries);
         }
-        ExperimentUtils.Statistics.incrementTotalFiles();
+        
         if (count > ExperimentUtils.Statistics.getMaxQueries()) {
             ExperimentUtils.Statistics.setMaxQueries(count);
         }
+        CallGraph cg = new CallGraph();
+        ExperimentUtils.Statistics.incrementTotalFiles();
+
+        List<QueryResult> queryResults = new ArrayList();
+
         ExperimentUtils.Timer<Node<NodeState, Value>> timer = new ExperimentUtils.Timer<>();
         timer.start();
         final var queryManager = new QueryManager();
@@ -201,13 +261,14 @@ public class Main {
             if (ExperimentUtils.isCallSiteQuery(query)) {
                 updateCG(solver, query);
             }
+            CallGraph queryCallGraph = solver.getCallGraph();
             try {
                 outputWriter.write("Known call graph:\n");
-                outputWriter.write(solver.getCallGraph().toString() + "\n");
+                outputWriter.write(queryCallGraph.toString() + "\n");
             } catch (IOException e) {
                 e.printStackTrace();
             }
-            solver.getCallGraph().forEach(cg::addEdge);
+            queryCallGraph.forEach(cg::addEdge);
             timer.split(query);
             long split = timer.getSplit(query);
             try {
@@ -215,20 +276,26 @@ public class Main {
             } catch (IOException e) {
                 e.printStackTrace();
             }
+            queryResults.add(new QueryResult(query.toString(), queryCallGraph.toJSON(), split));
         });
         queryManager.solve();
         timer.stop();
         ExperimentUtils.Statistics.incrementTotalTime(timer.getTotalElapsed());
         ExperimentUtils.Statistics.incrementCGEdgesFound(cg.size());
+        long totalExperimentTime = timer.getTotalElapsed();
+        double meanQueryTime = timer.getTotalElapsed() / count;
         try {
             outputWriter.write("CG for program:\n");
             outputWriter.write(cg + "\n");
-            outputWriter.write("Total elapsed time: " + timer.getTotalElapsed() + "ms\n");
-            outputWriter.write("Mean query time: " + timer.getTotalElapsed() / count + "ms\n\n");
-            System.out.println(cg.toJSON());
+            outputWriter.write("Total elapsed time: " + totalExperimentTime + "ms\n");
+            outputWriter.write("Mean query time: " + meanQueryTime + "ms\n\n");
+            outputWriter.write("Callgraph for program as JSON:\n");
+            outputWriter.write(cg.toJSON().toString());
         } catch (IOException e) {
             e.printStackTrace();
         }
+
+        return new ExperimentResult(jsFile, queryResults, cg.toJSON(), totalExperimentTime, meanQueryTime);
     }
 
     private static void updateCG(BackwardMerlinSolver solver, Node<NodeState, Value> query) {
