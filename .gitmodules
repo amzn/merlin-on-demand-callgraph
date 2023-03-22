@@ -1,6 +1,9 @@
 [submodule "tajs_vr"]
 	path = tajs_vr
 	url = git@github.com:cs-au-dk/tajs_vr.git
+[submodule "eval-jam/ISSTA-2021-Paper-156"]
+	path = eval-jam/ISSTA-2021-Paper-156
+	url = https://github.com/cs-au-dk/ISSTA-2021-Paper-156
 [submodule "ISSTA-2021-Paper-156"]
 	path = ISSTA-2021-Paper-156
 	url = https://github.com/cs-au-dk/ISSTA-2021-Paper-156

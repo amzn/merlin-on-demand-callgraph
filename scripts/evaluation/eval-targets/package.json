@@ -1,7 +1,4 @@
 {
-  "scripts": {
-    "postinstall": "node ./npm-install-each-dependency.js"
-  },
   "dependencies": {
     "foxx-framework": "^0.3.6",
     "jwtnoneify": "^1.0.1",

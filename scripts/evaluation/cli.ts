@@ -9,7 +9,7 @@ import { getBenchmarkMainFile, getBenchmarkModulePath, getDynCgsDir, getJamCgsDi
 
 const jamOption = new Option('-j, --jam-path <file>', 'the path to the jam executable').makeOptionMandatory();
 const nodeprofOption = new Option('-n, --nodeprof-path <file>', 'the path to the NodeProf distribution with GraalVM').makeOptionMandatory();
-const benchmarkNameOption = new Option('-b, --benchmark [names...]', "the name(s) of the benchmark to examine").choices(modulesToBenchmark);
+const benchmarkNameOption = new Option('-b, --benchmark [names...]', "the name(s) of the benchmark to examine");
 const mainFileOption = new Option('-m, --main [file]', "the path to the benchmark's main/start file (relative to the benchmark's node module directory)")
 const outputOption = new Option('-o, --out [file]', 'where to place the output file');
 

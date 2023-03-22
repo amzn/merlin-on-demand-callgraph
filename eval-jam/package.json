@@ -2,12 +2,11 @@
   "name": "eval-jam",
   "version": "1.0.0",
   "description": "",
-  "main": "dist/eval-jam/src/index.js",
+  "main": "index.js",
   "scripts": {
     "tsc": "tsc",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "npm run tsc && npm run copy-jam-resources",
-    "copy-jam-resources": "cp -R ../ISSTA-2021-Paper-156/res ./dist/res"
+    "build": "tsc"
   },
   "author": "",
   "license": "ISC",
@@ -28,9 +27,7 @@
     "get-repository-url": "^2.0.0",
     "graphviz": "0.0.9",
     "is-builtin-module": "^3.0.0",
-    "jam": "file:../ISSTA-2021-Paper-156",
     "lodash": "^4.17.15",
-    "logform": "2.4.2",
     "request": "^2.88.2",
     "semver": "^7.3.2",
     "simple-git": "^3.5.0",
@@ -38,15 +35,25 @@
     "table": "^5.4.6",
     "tmp": "^0.2.1",
     "ts-option": "^2.1.0",
-    "winston": "3.2.1"
+    "winston": "^3.2.1"
   },
   "devDependencies": {
     "@persper/js-callgraph": "^1.3.2",
+    "@types/acorn": "4.0.5",
+    "@types/chai": "^4.2.3",
+    "@types/cytoscape": "^3.14.5",
     "@types/estree": "0.0.44",
     "@types/fs-extra": "^9.0.1",
+    "@types/lodash": "^4.14.155",
     "@types/mocha": "^5.2.7",
     "@types/node": "^12.7.9",
+    "@types/tmp": "^0.2.0",
+    "chai": "^4.2.0",
     "commander": "^5.1.0",
+    "husky": "^4.2.5",
+    "mocha": "^6.2.1",
+    "prettier": "^2.0.5",
+    "pretty-quick": "^2.0.1",
     "ts-node": "^8.6.2",
     "typescript": "^3.7.2"
   }
