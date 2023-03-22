@@ -33,6 +33,7 @@ import wpds.interfaces.State;
 
 import javax.annotation.Nullable;
 import java.util.*;
+import java.util.concurrent.Flow;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -50,21 +51,24 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
      * Store node predecessor maps for each function as needed to avoid duplicating computation
      */
 
-    protected sync.pds.solver.nodes.Node<NodeState, Value> currentPDSNode;
-
     protected final QueryManager queryManager;
-    protected Set<State> nextStates;
-    protected Value queryValue;
-
+    protected final FlowFunctionContext context;
+    protected final Set<State> nextStates;
     // TODO: This is only ever null in flow function unit tests. This could be avoided by using
     // a mock object in the flow function tests.
     @Nullable
     protected final MerlinSolver containingSolver;
 
+    // Sanity check to ensure each flow function instance is used for exactly one transfer
+    // function application, ensuring that no mutable state is shared across multiple invocations
+    protected boolean transferApplied = false;
 
-    public AbstractFlowFunctions(MerlinSolver containingSolver, QueryManager queryManager) {
+
+    public AbstractFlowFunctions(MerlinSolver containingSolver, QueryManager queryManager, FlowFunctionContext context) {
         this.containingSolver = containingSolver;
         this.queryManager = queryManager;
+        this.context = context;
+        this.nextStates = new HashSet<>();
     }
 
     /**
@@ -75,7 +79,7 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
                 .map(alloc -> ((DeclareFunctionNode) alloc.getAllocationStatement()).getFunction());
     }
 
-    private synchronized void addNextState(State nextState) {
+    private void addNextState(State nextState) {
         nextStates.add(nextState);
     }
 
@@ -134,34 +138,29 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
      * <p>
      * Classes that extend this abstract class should implement "visit" methods that update (but do not re-assign)
      * the nextStates attribute.
-     *
-     * @param node
-     * @return
      */
-    public final synchronized Set<State> computeNextStates(Node node, Value val) {
-        queryValue = val;
-        nextStates = new HashSet<>();
+    public final Set<State> computeNextStates() {
+        // If this assertion fails, we are inadvertently reusing the same flow function
+        // instance.
+        assert !transferApplied;
+        transferApplied = true;
+        final var node = context.currentPDSNode().stmt().getNode();
+        final var val = context.queryValue();
         final var directionLabel = (this instanceof BackwardFlowFunctions) ? "bwd" : "fwd";
         final var lineNum = (node.getSourceLocation() != null)
                 ? "L" + node.getSourceLocation().getLineNumber()
                 : "L?";
         DebugUtils.debug(directionLabel + "+" + val + ": traversing node: " + node + "[" + node.getIndex() +
                 "@" + node.getBlock().getFunction() + "]   " + lineNum);
-        final var pdsNode = new sync.pds.solver.nodes.Node<>(new NodeState(node), val);
-        currentPDSNode = pdsNode;
         node.visitBy(this);
         return nextStates;
     }
 
-    protected synchronized void addStandardNormalFlow(Node next, Set<Value> killedValues) {
-        addNextState(makeSPDSNode(next, queryValue));
+    protected void addStandardNormalFlow(Node next) {
+        addNextState(makeSPDSNode(next, context.queryValue()));
     }
 
-    protected synchronized void addStandardNormalFlow(Node next) {
-        addNextState(makeSPDSNode(next, queryValue));
-    }
-
-    protected synchronized void addSingleState(Node n, Value v) {
+    protected void addSingleState(Node n, Value v) {
         addNextState(makeSPDSNode(n, v));
     }
 
@@ -182,34 +181,6 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
         );
     }
 
-    protected synchronized void addSinglePropPushState(Node n, Value v, Property location) {
-        addNextState(
-                new PushNode<>(
-                        makeNodeState(n),
-                        v,
-                        location,
-                        SyncPDSSolver.PDSSystem.FIELDS
-                )
-        );
-    }
-
-    protected void addSinglePropPopState(Node n, Value v, Property p) {
-        addNextState(
-                new PopNode<>(
-                        new NodeWithLocation<>(
-                                makeNodeState(n),
-                                v,
-                                p
-                        ),
-                        SyncPDSSolver.PDSSystem.FIELDS
-                )
-        );
-    }
-
-    protected Value getQueryValue() {
-        return queryValue;
-    }
-
     protected void logUnsoundness(Node node) {
         System.err.println("Warning - Unsoundness from unhandled language feature at:\n" +
                 "\t" + node.getSourceLocation().toUserFriendlyString(true) + "\n");
@@ -223,7 +194,7 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
      * @param usageScope
      * @return
      */
-    protected synchronized Function getDeclaringScope(String varName, Function usageScope) {
+    protected static Function getDeclaringScope(String varName, Function usageScope) {
         Function currentScope = usageScope;
         if (varName.equals("process")) {
             // Accessing arguments, process is always declared by the runtime in the outermost (main) scope
@@ -280,101 +251,21 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
     /**
      * Find call sites where the provided function may be called by issuing a new forward query on the function
      */
-    public synchronized LiveCollection<CallNode> findInvocationsOfFunction(Function function) {
+    public LiveCollection<CallNode> findInvocationsOfFunction(Function function) {
         return findInvocationsOfFunctionWithQuery(function).getFirst();
     }
 
-    public synchronized Pair<LiveCollection<CallNode>, Query> findInvocationsOfFunctionWithQuery(Function function) {
+    public Pair<LiveCollection<CallNode>, Query> findInvocationsOfFunctionWithQuery(Function function) {
         DeclareFunctionNode functionDeclaration = function.getNode();
         FunctionAllocation alloc = new FunctionAllocation(functionDeclaration);
         sync.pds.solver.nodes.Node<NodeState, Value> initialQuery = new sync.pds.solver.nodes.Node<>(
                 new NodeState(functionDeclaration),
                 alloc
         );
-//        final Set<Query> queries = new HashSet<>();
         final var solver = queryManager.getOrStartForwardQuery(initialQuery);
         final var query = new Query(initialQuery, true);
         var result = solver.getPointsToGraph().getKnownFunctionInvocations(alloc);
-//        queries.add(query);
-//        // We need to search by name and by register if present
-//        if (functionDeclaration.getResultRegister() != -1) {
-//            final var initialRegQuery = new sync.pds.solver.nodes.Node<>(
-//                    new NodeState(functionDeclaration),
-//                    new Register(functionDeclaration.getResultRegister(), functionDeclaration.getBlock().getFunction())
-//            );
-//            final var regSolver = queryManager.getOrStartForwardQuery(initialRegQuery);
-//            queries.
-//        }
         return Pair.make(result, query);
-    }
-
-    /**
-     * Retrieves the variable associated with the base register for a ReadPropertyNode. The variable is always loaded
-     * into the base register in a ReadVariableNode that occurs one node before the ReadPropertyNode.
-     *
-     * @param n
-     * @return
-     */
-    protected synchronized Variable getBaseForReadPropertyNode(ReadPropertyNode n) {
-        ReadVariableNode baseRead = ((ReadVariableNode) getNodeByIndex(
-                n.getIndex() - 1,
-                n.getBlock().getFunction()
-        ));
-        return new Variable(baseRead.getVariableName(), n.getBlock().getFunction());
-    }
-
-    /**
-     * Retrieves the variable associated with the result register for a ReadPropertyNode. The variable is always written
-     * to from the result register in a WriteVariableNode that occurs one node after the ReadPropertyNode.
-     *
-     * @param n
-     * @return
-     */
-    protected synchronized Variable getResultForReadPropertyNode(ReadPropertyNode n) {
-        WriteVariableNode resultWrite = ((WriteVariableNode) getNodeByIndex(
-                n.getIndex() + 1,
-                n.getBlock().getFunction()
-        ));
-        return new Variable(resultWrite.getVariableName(), n.getBlock().getFunction());
-    }
-
-    /**
-     * Retrieves the variable associated with the base register for a WritePropertyNode. The variable is always loaded
-     * into the base register in a ReadVariableNode that occurs two nodes before the WritePropertyNode.
-     *
-     * @param n
-     * @return
-     */
-    protected synchronized Variable getBaseForWritePropertyNode(WritePropertyNode n) {
-        ReadVariableNode baseRead = ((ReadVariableNode) getNodeByIndex(
-                n.getIndex() - 2,
-                n.getBlock().getFunction()
-        ));
-        return new Variable(baseRead.getVariableName(), n.getBlock().getFunction());
-    }
-
-    /**
-     * Retrieves the variable associated with the value register for a WritePropertyNode. The variable is always loaded
-     * into the value register in a ReadVariableNode that occurs one node before the WritePropertyNode.
-     *
-     * @param n
-     * @return
-     */
-    protected synchronized Value getValForWritePropertyNode(WritePropertyNode n) {
-        Node node = getNodeByIndex(
-                n.getIndex() - 1,
-                n.getBlock().getFunction()
-        );
-        if (node instanceof ReadVariableNode baseRead) {
-            return new Variable(baseRead.getVariableName(), n.getBlock().getFunction());
-        } else if (node instanceof ConstantNode constantNode) {
-            return new ConstantAllocation(constantNode);
-        } else if (node instanceof NewObjectNode newObjectNode) {
-            return new ObjectAllocation(newObjectNode);
-        } else if (node instanceof DeclareFunctionNode declareFunctionNode) {
-            return new FunctionAllocation(declareFunctionNode);
-        }
-        throw new RuntimeException("Unknown type for WritePropertyNode predecessor: " + node.getClass());
     }
 
     /**
@@ -383,7 +274,7 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
      * @param n
      * @return
      */
-    protected synchronized LiveCollection<Function> resolveFunctionCall(CallNode n) {
+    protected LiveCollection<Function> resolveFunctionCall(CallNode n) {
         assert containingSolver != null;
         LiveCollection<Allocation> predecessorUnion = new LiveSet<>(queryManager.scheduler());
         if (n.getFunctionRegister() != -1) {
@@ -421,31 +312,8 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
         return new Register(-100 + -1 * callNode.getIndex(), callNode.getBlock().getFunction());
     }
 
-    protected synchronized Collection<Node> getPredecessors(Node n) {
+    protected Collection<Node> getPredecessors(Node n) {
         return FlowgraphUtils.predecessorsOf(n).collect(Collectors.toSet());
-    }
-
-    /**
-     * A record for containing all mutable state of the current flow functions.
-     * This allows saving the current flow function state and restoring it when new results
-     * of subqueries are discovered. See `visit(CallNode n)` in BackwardFlowFunctions for
-     * an example.
-     */
-    protected record FlowFunctionState(
-            Value queryValue,
-            sync.pds.solver.nodes.Node<NodeState, Value> pdsNode) {
-    }
-
-    /**
-     * Create a new instance of the flow functions initialized to the given state. The state
-     * of the resulting flow functions will be a deep copy of the given state.
-     */
-    protected abstract AbstractFlowFunctions copyFromFlowFunctionState(FlowFunctionState state);
-
-    protected FlowFunctionState copyFlowFunctionState() {
-        final var queryValue = getQueryValue();
-        final var currentSPDSNode = currentPDSNode;
-        return new FlowFunctionState(queryValue, currentSPDSNode);
     }
 
     /**
@@ -465,11 +333,9 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
     }
 
     public final <A> void continueWithSubqueryResult(LiveCollection<A> subquery, QueryID queryID, BiConsumer<A, AbstractFlowFunctions> handler) {
-        final var flowFunctionState = copyFlowFunctionState();
         if (containingSolver != null) {
             subquery.onAdd(TaggedHandler.create(queryID, result -> {
-                final var newFlowFunctions = copyFromFlowFunctionState(flowFunctionState);
-                containingSolver.withFlowFunctions(newFlowFunctions, () -> handler.accept(result, newFlowFunctions));
+                handler.accept(result, this);
             }));
         }
     }
@@ -479,15 +345,11 @@ public abstract class AbstractFlowFunctions implements NodeVisitor {
             final var findBaseAllocsBackwards = new sync.pds.solver.nodes.Node<>(new NodeState(location), value);
             queryManager.getOrStartBackwardQuery(findBaseAllocsBackwards);
             final var basePointsToSet = queryManager.getPointsToGraph().getPointsToSet(location, value);
-            final var flowFunctionState = copyFlowFunctionState();
             final QueryID bwdsID = new AliasQueryID(
                     new Query(containingSolver.initialQuery, containingSolver instanceof ForwardMerlinSolver),
                     new Query(findBaseAllocsBackwards, false),
                     originatingQueryValue);
-            basePointsToSet.onAdd(TaggedHandler.create(bwdsID, alloc -> {
-                final var newFlowFunctions = copyFromFlowFunctionState(flowFunctionState);
-                containingSolver.withFlowFunctions(newFlowFunctions, () -> handler.accept(alloc));
-            }));
+            basePointsToSet.onAdd(TaggedHandler.create(bwdsID, handler));
         }
     }
 }

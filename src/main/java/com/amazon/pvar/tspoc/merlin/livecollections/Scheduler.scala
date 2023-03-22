@@ -7,7 +7,8 @@ import java.util.concurrent.{ForkJoinPool, TimeUnit}
   */
 final class Scheduler(
     pool: ForkJoinPool = new ForkJoinPool(
-      Runtime.getRuntime.availableProcessors
+//      Runtime.getRuntime.availableProcessors
+      1
     )
 ) {
 
@@ -24,7 +25,8 @@ final class Scheduler(
 object Scheduler {
   // Java-friendly constructors (since Java does not support default parameters)
   def create(): Scheduler = new Scheduler(
-    new ForkJoinPool(Runtime.getRuntime.availableProcessors)
+    new ForkJoinPool(1)
+      //Runtime.getRuntime.availableProcessors)
   )
 
   def create(pool: ForkJoinPool) = new Scheduler(pool)

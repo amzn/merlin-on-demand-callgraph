@@ -31,6 +31,7 @@ import sync.pds.solver.nodes.PushNode;
 import wpds.interfaces.State;
 
 import java.util.*;
+import java.util.concurrent.Flow;
 import java.util.stream.Collectors;
 
 public class ForwardFlowFunctions extends AbstractFlowFunctions {
@@ -41,8 +42,8 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
      */
     private final Map<Function, Map<AbstractNode, Set<AbstractNode>>> successorMapCache = new HashMap<>();
 
-    public ForwardFlowFunctions(MerlinSolver containingSolver, QueryManager queryManager) {
-        super(containingSolver, queryManager);
+    public ForwardFlowFunctions(MerlinSolver containingSolver, QueryManager queryManager, FlowFunctionContext context) {
+        super(containingSolver, queryManager, context);
     }
 
     @Override
@@ -62,7 +63,7 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
         killed.add(arg1);
         final var arg2 = new Register(n.getArg2Register(), n.getBlock().getFunction());
         killed.add(arg2);
-        if (!killed.contains(getQueryValue())) {
+        if (!killed.contains(context.queryValue())) {
             addStandardNormalFlowToNext(n);
         }
     }
@@ -89,10 +90,10 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
 
         // Save current flow function state and capture it in closure:
         if (containingSolver != null) {
-            final var queryID = containingSolver.getQueryID(currentPDSNode, false, false);
-            final var sourceState = currentPDSNode;
+            final var queryID = containingSolver.getQueryID(context.currentPDSNode(), false, false);
+            final var sourceState = context.currentPDSNode();
             continueWithSubqueryResult(resolveFunctionCall(n), queryID,
-                    callee -> this.handleFlowToCallee(n, callee, sourceState));
+                    callee -> this.handleFlowToCallee(n, callee, sourceState, context));
         }
         // Propagate values across the call site
         treatAsNop(n);
@@ -116,11 +117,14 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
     @Override
     public void visit(ConstantNode n) {
         final var firstNodeInFunction = n.getBlock().getFunction().getEntry().getFirstNode().equals(n);
-        // It might be sufficient to do the below propagation only if the variable name matches a parameter.
-        if (firstNodeInFunction && getQueryValue() instanceof Variable queryVar && queryVar.getDeclaringFunction().equals(n.getBlock().getFunction())) {
+        // It might be sufficient to do the below propagation only if the variable name
+        // matches a parameter.
+        if (firstNodeInFunction && context.queryValue() instanceof Variable queryVar
+                && queryVar.getDeclaringFunction().equals(n.getBlock().getFunction())) {
             // A parameter may be captured by a closure defined here.
-            final var capturingFunctions = CapturedVariableAnalysis.functionsCapturingVarIn(n.getBlock().getFunction(), queryVar.getVarName());
-            capturingFunctions.forEach(capturingFunc -> handleFlowToClosureVar(queryVar, capturingFunc));
+            final var capturingFunctions = CapturedVariableAnalysis.functionsCapturingVarIn(n.getBlock().getFunction(),
+                    queryVar.getVarName());
+            capturingFunctions.forEach(capturingFunc -> handleFlowToClosureVar(queryVar, capturingFunc, context));
         }
         treatAsNop(n);
     }
@@ -168,10 +172,12 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
         if (n.getResultRegister() != -1) {
             // This function declaration is a function expression, assigned to some result
             // register
-            // A forward query to find invocations of functions starts from declare function nodes
-            // as well, so if we are looking for the function being declared here, we must also
+            // A forward query to find invocations of functions starts from declare function
+            // nodes
+            // as well, so if we are looking for the function being declared here, we must
+            // also
             // add a flow into the result register:
-            if (getQueryValue() instanceof FunctionAllocation functionAllocation &&
+            if (context.queryValue() instanceof FunctionAllocation functionAllocation &&
                     functionAllocation.getAllocationStatement().equals(n)) {
                 final var resultReg = new Register(n.getResultRegister(), n.getBlock().getFunction());
                 genSingleNormalFlow(n, resultReg);
@@ -182,7 +188,7 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
         if (functionName != null && !functionName.isBlank()) {
             Variable functionVariable = new Variable(n.getFunction().getName(), n.getBlock().getFunction());
             FunctionAllocation alloc = new FunctionAllocation(n);
-            if (getQueryValue().equals(alloc)) {
+            if (context.queryValue().equals(alloc)) {
                 genSingleNormalFlow(n, functionVariable);
             }
             treatAsNop(n);
@@ -276,13 +282,13 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
         if (n.isPropertyFixed()) {
             // Property is a fixed String
             Property property = new Property(n.getPropertyString());
-            if (!getQueryValue().equals(result)) {
+            if (!context.queryValue().equals(result)) {
                 addStandardNormalFlowToNext(n);
             }
             if (n.getResultRegister() == -1) {
                 return; // nothing more to do
             }
-            final var queryValue = getQueryValue();
+            final var queryValue = context.queryValue();
             withAllocationSitesOf(n, baseReg, alloc -> {
                 assert containingSolver != null;
                 DebugUtils.debug("fwd found alias for base of property read " + n + ": " +
@@ -294,11 +300,10 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
                                         new NodeWithLocation<>(
                                                 makeNodeState(succ),
                                                 result,
-                                                property
-                                        ),
-                                        SyncPDSSolver.PDSSystem.FIELDS
-                                );
-                                final var sourceNode = new sync.pds.solver.nodes.Node<>(makeNodeState(n), (Value)alloc);
+                                                property),
+                                        SyncPDSSolver.PDSSystem.FIELDS);
+                                final var sourceNode = new sync.pds.solver.nodes.Node<>(makeNodeState(n),
+                                        (Value) alloc);
                                 containingSolver.propagate(sourceNode, popNode);
                             });
                 }
@@ -309,10 +314,14 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
         }
     }
 
-    private void handleFlowToCallee(CallNode caller, Function callee, sync.pds.solver.nodes.Node<NodeState, Value> sourceState) {
+    private void handleFlowToCallee(
+            CallNode caller,
+            Function callee,
+            sync.pds.solver.nodes.Node<NodeState, Value> sourceState,
+            FlowFunctionContext context) {
         assert containingSolver != null;
         final int numArgs = caller.getNumberOfArgs();
-        final var queryValue = containingSolver.getFlowFunctions().getQueryValue();
+        final var queryValue = context.queryValue();
         DebugUtils.debug(this.containingSolver.getQueryString() + "; New target function: " +
                 callee + " for query " + this.containingSolver.getQueryString() +
                 " and query var " + queryValue + " for call node: " + caller);
@@ -332,7 +341,7 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
                         DebugUtils.debug("Propagating actual argument " + argRegister
                                 + " to function parameter: " + param);
                         final var nextState = callPushState(entryPoint, param, caller);
-                        containingSolver.propagate(currentPDSNode, nextState);
+                        containingSolver.propagate(context.currentPDSNode(), nextState);
                     }
                 } catch (IndexOutOfBoundsException e) {
                     // Do nothing, if we pass an extra unused arg to a function, there's no need to
@@ -354,10 +363,10 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
         Variable read = new Variable(
                 n.getVariableName(),
                 getDeclaringScope(n.getVariableName(), n.getBlock().getFunction()));
-        if (!getQueryValue().equals(result)) {
+        if (!context.queryValue().equals(result)) {
             addStandardNormalFlowToNext(n);
         }
-        if (getQueryValue().equals(read)) {
+        if (context.queryValue().equals(read)) {
             genSingleNormalFlow(n, result);
         }
     }
@@ -382,33 +391,33 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
         final var containingFunction = n.getBlock().getFunction();
         LiveCollection<CallNode> possibleReturnSites = findInvocationsOfFunction(containingFunction);
         if (containingSolver != null) {
-            final var currentSPDSNode = currentPDSNode;
+            final var currentSPDSNode = context.currentPDSNode();
             final var queryID = containingSolver.getQueryID(currentSPDSNode, true, false);
-            final var queryValue = getQueryValue();
-            continueWithSubqueryResult(possibleReturnSites, queryID, (returnSite, newFlowFunctions)-> {
+            final var queryValue = context.queryValue();
+            continueWithSubqueryResult(possibleReturnSites, queryID, (returnSite, newFlowFunctions) -> {
                 if (queryValue.equals(result)) {
                     DebugUtils.debug("Found return site: " + returnSite + " for " +
                             n.getBlock().getFunction() + "[fwd query: " + containingSolver.initialQuery + "]");
                     Register returnReg = new Register(returnSite.getResultRegister(),
                             returnSite.getBlock().getFunction());
-//                    getSuccessors(returnSite)
-//                            .forEach(returnSucc -> {
-//                                State popState = callPopState(returnSucc, returnReg);
-//                                containingSolver.propagate(currentSPDSNode, popState);
-//                            });
+                    // getSuccessors(returnSite)
+                    // .forEach(returnSucc -> {
+                    // State popState = callPopState(returnSucc, returnReg);
+                    // containingSolver.propagate(currentSPDSNode, popState);
+                    // });
                     State popState = callPopState(returnSite, returnReg);
                     if (popState.toString().contains("v9")) {
                         final var breakpoin = 1;
                     }
                     containingSolver.propagate(currentSPDSNode, popState);
-//                    containingSolver.solve();
+                    // containingSolver.solve();
                 }
                 // Handle return propagation of formal parameters
                 // TODO: and any other values visible but not declared in this function scope
                 for (int i = 0; i < containingFunction.getParameterNames().size(); i++) {
                     final var paramVar = new Variable(containingFunction.getParameterNames().get(i),
                             containingFunction);
-                    if (getQueryValue().equals(paramVar)) {
+                    if (context.queryValue().equals(paramVar)) {
                         // Find corresponding actual parameter at returnSite:
                         // Note that the caller may have passed too few arguments. In that case, we
                         // don't propagate the flow
@@ -463,7 +472,7 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
     @Override
     public void visit(UnaryOperatorNode n) {
         final var argRegister = new Register(n.getArgRegister(), n.getBlock().getFunction());
-        if (!getQueryValue().equals(argRegister)) {
+        if (!context.queryValue().equals(argRegister)) {
             addStandardNormalFlowToNext(n);
         }
     }
@@ -492,20 +501,19 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
             // Property is a fixed String
             Property property = new Property(n.getPropertyString());
             treatAsNop(n);
-            if (getQueryValue().equals(valueReg)) {
+            if (context.queryValue().equals(valueReg)) {
                 // Propagate to aliases
-                final var currentPDSNode = this.currentPDSNode;
+                final var currentPDSNode = context.currentPDSNode();
                 withAllocationSitesOf(n, baseReg, alloc -> getSuccessors(n)
-                            .forEach(succ -> {
-                                final var pushNode = new PushNode<>(
-                                        makeNodeState(succ),
-                                        alloc,
-                                        property,
-                                        SyncPDSSolver.PDSSystem.FIELDS
-                                );
-                                assert containingSolver != null;
-                                containingSolver.propagate(currentPDSNode, pushNode);
-                            }), getQueryValue());
+                        .forEach(succ -> {
+                            final var pushNode = new PushNode<>(
+                                    makeNodeState(succ),
+                                    alloc,
+                                    property,
+                                    SyncPDSSolver.PDSSystem.FIELDS);
+                            assert containingSolver != null;
+                            containingSolver.propagate(currentPDSNode, pushNode);
+                        }), context.queryValue());
             }
         } else {
             // TODO: dispatch a backward query on the register used for the property read
@@ -526,20 +534,22 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
                 n.getVariableName(),
                 getDeclaringScope(n.getVariableName(), n.getBlock().getFunction()));
 
-        if (!getQueryValue().equals(write)) {
+        if (!context.queryValue().equals(write)) {
             addStandardNormalFlowToNext(n);
         }
 
-        if (getQueryValue().equals(argRegister) || // ad-hoc fix:
-                getQueryValue() instanceof ObjectAllocation objAlloc && objAlloc.getAllocationStatement().getResultRegister() == n.getValueRegister()
-        ) {
+        if (context.queryValue().equals(argRegister) || // ad-hoc fix:
+                context.queryValue() instanceof ObjectAllocation objAlloc
+                        && objAlloc.getAllocationStatement().getResultRegister() == n.getValueRegister()) {
             genSingleNormalFlow(n, write);
 
-            // If the variable we are writing to flows to a closure, we also need to propagate flow there. See
+            // If the variable we are writing to flows to a closure, we also need to
+            // propagate flow there. See
             // closure-handling.md for details.
-            final var capturingFunctions = CapturedVariableAnalysis.functionsCapturingVarIn(n.getBlock().getFunction(), n.getVariableName());
+            final var capturingFunctions = CapturedVariableAnalysis.functionsCapturingVarIn(n.getBlock().getFunction(),
+                    n.getVariableName());
             final var capturedVar = new Variable(n.getVariableName(), n.getBlock().getFunction());
-            capturingFunctions.forEach(capturingFunc -> handleFlowToClosureVar(capturedVar, capturingFunc));
+            capturingFunctions.forEach(capturingFunc -> handleFlowToClosureVar(capturedVar, capturingFunc, context));
         }
 
     }
@@ -587,21 +597,13 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
         treatAsNop(n);
     }
 
-//    @Override
-//    protected synchronized void killAt(Node n, Set<Value> killed) {
-//        throw new RuntimeException("to be removed");
-//        getSuccessors(n)
-//                .forEach(node -> addStandardNormalFlow(node, killed));
-//    }
-
-    @Override
-    protected synchronized void treatAsNop(Node n) {
+    protected void treatAsNop(Node n) {
         getSuccessors(n)
                 .forEach(this::addStandardNormalFlow);
     }
 
     @Override
-    protected synchronized void genSingleNormalFlow(Node n, Value v) {
+    protected void genSingleNormalFlow(Node n, Value v) {
         getSuccessors(n)
                 .forEach(node -> addSingleState(node, v));
     }
@@ -622,7 +624,7 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
         return inverse;
     }
 
-    private synchronized Collection<Node> getSuccessors(Node n) {
+    private Collection<Node> getSuccessors(Node n) {
         return successorMapCache
                 .computeIfAbsent(
                         n.getBlock().getFunction(),
@@ -634,23 +636,12 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
                 .collect(Collectors.toSet());
     }
 
-    private ForwardFlowFunctions(MerlinSolver containingSolver, QueryManager queryManager,
-            FlowFunctionState savedState) {
-        super(containingSolver, queryManager);
-        this.queryValue = savedState.queryValue();
-        this.currentPDSNode = savedState.pdsNode();
-
-    }
-
-    @Override
-    protected ForwardFlowFunctions copyFromFlowFunctionState(FlowFunctionState state) {
-        return new ForwardFlowFunctions(containingSolver, queryManager, state);
-    }
-
-    private void handleFlowToClosureVar(Variable capturedVar, DeclareFunctionNode capturingFunction) {
+    private void handleFlowToClosureVar(Variable capturedVar, DeclareFunctionNode capturingFunction,
+            FlowFunctionContext context) {
         if (containingSolver != null) {
             final var callSitesAndQuery = findInvocationsOfFunctionWithQuery(capturingFunction.getFunction());
-            final var queryID = new CapturedVariableQuery(new Query(currentPDSNode, true), callSitesAndQuery.getSecond());
+            final var queryID = new CapturedVariableQuery(new Query(context.currentPDSNode(), true),
+                    callSitesAndQuery.getSecond());
             continueWithSubqueryResult(callSitesAndQuery.getFirst(), queryID, callSite -> {
                 final var callSiteState = makeSPDSNode(callSite, capturedVar);
                 final var initialState = containingSolver.initialQuery;
@@ -659,8 +650,7 @@ public class ForwardFlowFunctions extends AbstractFlowFunctions {
                 // flow from call site into function:
                 final var inFuncState = makeSPDSNode(
                         (Node) capturingFunction.getFunction().getEntry().getFirstNode(),
-                        capturedVar
-                );
+                        capturedVar);
                 containingSolver.propagate(callSiteState, inFuncState);
             });
         }

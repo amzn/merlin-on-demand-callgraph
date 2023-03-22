@@ -22,6 +22,7 @@ import com.amazon.pvar.tspoc.merlin.solver.QueryManager;
 import dk.brics.tajs.flowgraph.FlowGraph;
 import dk.brics.tajs.flowgraph.jsnodes.CallNode;
 import dk.brics.tajs.flowgraph.jsnodes.DeclareFunctionNode;
+import org.apache.log4j.Level;
 import sync.pds.solver.nodes.Node;
 
 import java.io.File;
@@ -168,12 +169,17 @@ public class Main {
     private static void runExperiment(String jsFile, FileWriter outputWriter) {
         CallGraph cg = new CallGraph();
         boolean debugFlag = ExperimentOptions.dumpFlowGraph();
+        if (debugFlag) {
+            org.apache.log4j.Logger.getRootLogger().setLevel(Level.DEBUG);
+        }
         FlowGraph flowGraph = flowGraphForProgram(jsFile, debugFlag);
         Set<Node<NodeState, Value>> taintQueries = ExperimentUtils.getTaintQueries(flowGraph);
         int count = taintQueries.size();
         if (count == 0) {
             System.err.println("No queries detected for " + jsFile);
             System.exit(1);
+        } else {
+            System.err.println("Detected queries: " + taintQueries);
         }
         ExperimentUtils.Statistics.incrementTotalFiles();
         if (count > ExperimentUtils.Statistics.getMaxQueries()) {
@@ -181,9 +187,9 @@ public class Main {
         }
         ExperimentUtils.Timer<Node<NodeState, Value>> timer = new ExperimentUtils.Timer<>();
         timer.start();
+        final var queryManager = new QueryManager();
         taintQueries.forEach(query -> {
             ExperimentUtils.Statistics.incrementTotalQueries();
-            final var queryManager = new QueryManager();
             BackwardMerlinSolver solver = queryManager.getOrCreateBackwardSolver(query);
             try {
                 outputWriter.write("Query: " + query + "\n");

@@ -19,6 +19,7 @@ import com.amazon.pvar.tspoc.merlin.DebugUtils;
 import com.amazon.pvar.tspoc.merlin.ir.*;
 import com.amazon.pvar.tspoc.merlin.solver.flowfunctions.AbstractFlowFunctions;
 import com.amazon.pvar.tspoc.merlin.solver.flowfunctions.BackwardFlowFunctions;
+import com.amazon.pvar.tspoc.merlin.solver.flowfunctions.FlowFunctionContext;
 import dk.brics.tajs.flowgraph.jsnodes.CallNode;
 import dk.brics.tajs.flowgraph.jsnodes.ConstantNode;
 import dk.brics.tajs.flowgraph.jsnodes.DeclareFunctionNode;
@@ -35,13 +36,10 @@ import java.util.Objects;
 
 public class BackwardMerlinSolver extends MerlinSolver {
 
-    private BackwardFlowFunctions flowFunctions;
-
     private boolean isFunctionQuery = false;
 
     public BackwardMerlinSolver(QueryManager queryManager, Node<NodeState, Value> initialQuery) {
         super(queryManager, initialQuery);
-        flowFunctions = new BackwardFlowFunctions(this, queryManager);
         DebugUtils.debug("Creating backwards solver for query: " + initialQuery);
         registerPointsToUpdateListener(initialQuery);
     }
@@ -122,7 +120,7 @@ public class BackwardMerlinSolver extends MerlinSolver {
      * If this solver is attempting to resolve callees of a call site, and it has reached a function declaration,
      * add a new call edge to the call graph
      * @param node
-     * @param nextStates
+     * @param nextState
      */
     @Override
     protected void updateCallGraph(Node<NodeState, Value> node, State nextState) {
@@ -149,44 +147,47 @@ public class BackwardMerlinSolver extends MerlinSolver {
         }
     }
 
-    @Override
-    public AbstractFlowFunctions getFlowFunctions() {
-        return flowFunctions;
-    }
-
     /**
-     * When processing a pop node in the backward analysis, we must consider that an unmatched call pop might occur on
-     * a valid data flow path if the value being queried flows to an outer function scope.
-     * The SPDS framework has a mechanism for handling this in the form of the UnbalancedPopListener class.
-     * The listener's unbalancedPop method is called when an unbalanced pop is detected by SPDS, and if the situation
-     * described above applies, Merlin propagates the interprocedural flow as if it was a normal flow.
+     * When processing a pop node in the backward analysis, we must consider that an
+     * unmatched call pop might occur on
+     * a valid data flow path if the value being queried flows to an outer function
+     * scope.
+     * The SPDS framework has a mechanism for handling this in the form of the
+     * UnbalancedPopListener class.
+     * The listener's unbalancedPop method is called when an unbalanced pop is
+     * detected by SPDS, and if the situation
+     * described above applies, Merlin propagates the interprocedural flow as if it
+     * was a normal flow.
      *
      * @param curr
      * @param popNode
      */
     @Override
     public void processPop(Node<NodeState, Value> curr, PopNode popNode) {
-        UnbalancedPopListener<NodeState, INode<Value>, Weight.NoWeight> unbalancedPopListener =
-                (valueINode, transition, noWeight) -> {
-                    Value targetVal = transition.getTarget().fact();
-                    // If the transition target is the same as the initial query value, the analysis should continue
-                    // past the unbalanced pop because the value flows past the entry point of the current function
-                    if (targetVal.equals(BackwardMerlinSolver.this.initialQuery.fact())) {
-                        DebugUtils.debug("Following unbalanced pop flow for " + BackwardMerlinSolver.this.initialQuery.fact());
-                        final var func = transition.getLabel().getNode().getBlock().getFunction();
-                        final var callSites = getFlowFunctions().findInvocationsOfFunction(func);
-                        final var queryID = getQueryID(curr, true, true);
-                        getFlowFunctions().continueWithSubqueryResult(callSites, queryID, callNode -> {
-                            Node<NodeState, Value> normalizedCallPop = new Node<>(
-                                    new NodeState(callNode),
-                                    valueINode.fact()
-                            );
-                            propagate(curr, normalizedCallPop);
-                        });
-                    } else {
-                        DebugUtils.debug("Unbalanced pop with target " + targetVal + " doesn't match initialQuery: " + BackwardMerlinSolver.this.initialQuery);
-                    }
-                };
+        UnbalancedPopListener<NodeState, INode<Value>, Weight.NoWeight> unbalancedPopListener = (valueINode, transition,
+                noWeight) -> {
+            Value targetVal = transition.getTarget().fact();
+            // If the transition target is the same as the initial query value, the analysis
+            // should continue
+            // past the unbalanced pop because the value flows past the entry point of the
+            // current function
+            if (targetVal.equals(BackwardMerlinSolver.this.initialQuery.fact())) {
+                DebugUtils.debug("Following unbalanced pop flow for " + BackwardMerlinSolver.this.initialQuery.fact());
+                final var func = transition.getLabel().getNode().getBlock().getFunction();
+                final var flowFunctions = makeFlowFunctions(curr);
+                final var callSites = flowFunctions.findInvocationsOfFunction(func);
+                final var queryID = getQueryID(curr, true, true);
+                flowFunctions.continueWithSubqueryResult(callSites, queryID, callNode -> {
+                    Node<NodeState, Value> normalizedCallPop = new Node<>(
+                            new NodeState(callNode),
+                            valueINode.fact());
+                    propagate(curr, normalizedCallPop);
+                });
+            } else {
+                DebugUtils.debug("Unbalanced pop with target " + targetVal + " doesn't match initialQuery: "
+                        + BackwardMerlinSolver.this.initialQuery);
+            }
+        };
         // Apply field normal flow
         this.callAutomaton.registerUnbalancedPopListener(unbalancedPopListener);
         if (popNode instanceof CallPopNode callPopNode) {
@@ -233,19 +234,15 @@ public class BackwardMerlinSolver extends MerlinSolver {
     }
 
     @Override
-    public QueryID getQueryID(Node<NodeState, Value> subQuery, boolean isSubQueryForward, boolean inUnbalancedPopListener, boolean resolvesAliasing) {
-        return new StandardQueryID(new Query(initialQuery, false), new Query(subQuery, isSubQueryForward), inUnbalancedPopListener, resolvesAliasing);
+    public QueryID getQueryID(Node<NodeState, Value> subQuery, boolean isSubQueryForward,
+            boolean inUnbalancedPopListener, boolean resolvesAliasing) {
+        return new StandardQueryID(new Query(initialQuery, false), new Query(subQuery, isSubQueryForward),
+                inUnbalancedPopListener, resolvesAliasing);
     }
 
-    @Override
-    public synchronized void withFlowFunctions(AbstractFlowFunctions flowFunctions, Runnable runnable) {
-        if (flowFunctions instanceof BackwardFlowFunctions backwardFlowFunctions) {
-            final var oldFlowFunctions = this.flowFunctions;
-            this.flowFunctions = backwardFlowFunctions;
-            runnable.run();
-            this.flowFunctions = oldFlowFunctions;
-        } else {
-            throw new RuntimeException("BUG: Tried to use non-backward flow functions with BackwardMerlinSolver");
-        }
+    protected final AbstractFlowFunctions makeFlowFunctions(Node<NodeState, Value> currentPDSNode) {
+        final var context = new FlowFunctionContext(currentPDSNode);
+        return new BackwardFlowFunctions(this, queryManager, context);
     }
+
 }
