@@ -51,7 +51,7 @@ const generateJamCallGraphs = (jamPath: string, graalNodeHome: string, benchmark
 
   for (const benchmark of benchmarks) {
     try {
-      const outputFile = path.resolve(jamCallgraphOutDir, `${benchmark}.json`);
+      const outputFile = path.resolve(jamCallgraphOutDir, `${benchmark}.dot`);
       const resultBuffer = runJam(jamPath, graalNodeHome, benchmark, outputFile /* remaining defaults are okay */);
       console.log(resultBuffer.toString());
       generatedCallGraphs.push({ name: benchmark, outputFile: outputFile});

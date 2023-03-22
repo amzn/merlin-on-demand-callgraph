@@ -1,7 +1,5 @@
 eval-jam/node_modules/*
 scripts/evaluation/node_modules/*
-src/test/resources/js/**/_babel/*
-src/test/resources/js/**/*.flowgraph
 .bsp
 .idea
 .metals
