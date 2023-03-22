@@ -1,8 +1,12 @@
 
 import { Position } from "estree";
-import { PropertyReadsOnLibraryObjectStrategies, ResolvedCallGraphNode, SimpleCallGraph } from "../ISSTA-2021-Paper-156/src/usage-model-generator/compute-call-graph";
-import { FunctionCreation } from "../ISSTA-2021-Paper-156/src/usage-model-generator/access-path";
-import { VulnerabilityScanner } from "../ISSTA-2021-Paper-156/src/call-graph/scanner";
+// Note: normally, since `jam` is declared as a dependency in the package.json we could just use `from "jam/src/..." here.
+// However, the ISSTA-2021-Paper-156 does not declare it's main js file or typings correctly in its package.json and so
+// the typescript compiler does not see the exported javascript thus while we use the types from node_modules/jam, we 
+// have to point to the actual typescript code directly 
+import { PropertyReadsOnLibraryObjectStrategies, ResolvedCallGraphNode, SimpleCallGraph } from "../../ISSTA-2021-Paper-156/src/usage-model-generator/compute-call-graph";
+import { FunctionCreation } from "../../ISSTA-2021-Paper-156/src/usage-model-generator/access-path";
+import { VulnerabilityScanner } from "../../ISSTA-2021-Paper-156/src/call-graph/scanner";
 import * as fs from "fs";
 import { resolve } from 'path';
 import commander from 'commander';
@@ -68,7 +72,7 @@ const callGraphToJSON = (cg: SimpleCallGraph): JsonCallGraph => {
 
 const writeJSONForCallGraph = (jsonCG: JsonCallGraph, jsonFile: fs.PathLike): void => {
   console.log(`Writing JSON call graph to ${jsonFile}`);
-  fs.writeFileSync(jsonFile, JSON.stringify(jsonCG));
+  fs.writeFileSync(jsonFile, JSON.stringify(jsonCG, undefined, 2));
 };
 
 

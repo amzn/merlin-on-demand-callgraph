@@ -35,7 +35,10 @@ For example, if you are using using the Amazon Coretto SDK on Mac OSX, the follo
 
 ### Running Merlin
 
-After that, the project can be built by running `sbt compile` and run via `sbt run`.
+After that, the project can be built by running `sbt compile` and run via `sbt run`. From the command line, you can execute:
+```
+sbt "run --file path/to/js/file --output path/to/output/file"
+```
 
 The test suite can be run using `sbt test`.
 
