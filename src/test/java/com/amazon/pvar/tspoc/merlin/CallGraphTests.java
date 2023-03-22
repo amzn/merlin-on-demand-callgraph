@@ -189,12 +189,15 @@ public final class CallGraphTests {
                 .filter(node -> node.getSourceLocation() != null && node.getSourceLocation().getLineNumber() == lineNo)
                 .toList();
         final Stream<Allocation> objectAllocs = nodesOnLine.stream().filter(node -> node instanceof NewObjectNode)
-                .map(newObjectNode -> new ObjectAllocation((NewObjectNode) newObjectNode));
+                .map(newObjectNode -> new ObjectAllocation((dk.brics.tajs.flowgraph.jsnodes.Node) newObjectNode));
+        final Stream<Allocation> constructorAllocs = nodesOnLine.stream().filter(node -> node instanceof CallNode callNode &&
+                callNode.isConstructorCall())
+                .map(callNode -> new ObjectAllocation((dk.brics.tajs.flowgraph.jsnodes.Node) callNode));
         final Stream<Allocation> constAllocs = nodesOnLine.stream().filter(node -> node instanceof ConstantNode)
                 .map(constNode -> new ConstantAllocation((ConstantNode) constNode));
         final Stream<Allocation> funcAllocs = nodesOnLine.stream().filter(node -> node instanceof DeclareFunctionNode)
                 .map(funcNode -> new FunctionAllocation((DeclareFunctionNode) funcNode));
-        final var allAllocs = Stream.concat(objectAllocs, Stream.concat(constAllocs, funcAllocs));
+        final var allAllocs = Stream.concat(Stream.concat(objectAllocs, constructorAllocs), Stream.concat(constAllocs, funcAllocs));
         return ensureOneElementIn(
                 allAllocs,
                 "Ambiguous allocations on line " + lineNo + ": " + allAllocs
