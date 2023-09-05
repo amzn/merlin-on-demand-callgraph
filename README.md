@@ -1,13 +1,23 @@
+## This project is deprecated and no longer maintained.
+
+
 ## Merlin: On-Demand Call Graph Generation for JavaScript
 
-_Note_: This is work in progress and not suitable for production use.
+_Note_: This is a proof-of-concept implementation and not suitable for production use: Many JavaScript features are not
+supported and no soundness guarantees are provided.
 
 This repository contains an experimental on-demand call graph construction
 algorithm for JavaScript programs, based on [Synchronized Push-Down
-Systems](https://johspaeth.github.io/project/spds/). Only a small subset of
-ES5 language features are supported at the moment.
+Systems](https://johspaeth.github.io/project/spds/). Only a small subset of ES5
+language features are supported at the moment. This code accompanies the
+publication "Lifting On-Demand Analysis to Higher-Order Languages" published at
+the [Static Analysis Symposium 2023](https://conf.researchr.org/home/sas-2023)).
 
 ## Building and Running
+
+The easiest way to run this prototype is via the docker image 
+part of the [Zenodo artifact](https://zenodo.org/record/8189312) associated
+with the paper.
 
 ### Installing dependencies
 First, check out the submodules by running `git submodule update --init --recursive`.

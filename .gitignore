@@ -8,3 +8,6 @@ scripts/evaluation/node_modules/*
 eval-jam/dist
 project/target
 target
+*.flowgraph
+_babel
+project/build.properties

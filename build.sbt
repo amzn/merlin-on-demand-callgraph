@@ -64,8 +64,19 @@ libraryDependencies += "org.jgrapht" % "jgrapht-io" % "1.5.1"
 // https://mvnrepository.com/artifact/org.jgrapht/jgrapht-ext
 libraryDependencies += "org.jgrapht" % "jgrapht-ext" % "1.5.1"
 
+val circeVersion = "0.14.1"
+
+libraryDependencies ++= Seq(
+  "io.circe" %% "circe-core",
+  "io.circe" %% "circe-generic",
+  "io.circe" %% "circe-parser",
+  "io.circe" %% "circe-generic-extras"
+).map(_ % circeVersion)
+
+libraryDependencies += "com.lihaoyi" %% "os-lib" % "0.9.1"
+
 Compile / mainClass := Some(
-  "com.amazon.pvar.tspoc.merlin.experiments.Main"
+  "com.amazon.pvar.merlin.experiments.CollectEvaluationData"
 )
 
 Compile / unmanagedJars := thirdPartyJars(baseDirectory.value).get.classpath
